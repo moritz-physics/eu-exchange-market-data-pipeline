@@ -1,0 +1,31 @@
+import { test, expect } from '@playwright/test';
+
+test('test', async ({ page }) => {
+  await page.goto('https://www.boersenag.de/mifid-ii-delayed-data/');
+  await page.getByRole('button', { name: 'Nur essenzielle Cookies' }).click();
+  await page.getByRole('button', { name: 'Inhalt entsperren' }).click();
+  const downloadPromise = page.waitForEvent('download');
+  await page.locator('#mifid-iframe').contentFrame().getByRole('link', { name: 'Download der Daten für DUSA' }).click();
+  const download = await downloadPromise;
+  const download1Promise = page.waitForEvent('download');
+  await page.locator('#mifid-iframe').contentFrame().getByRole('link', { name: 'Download der Daten für DUSB' }).click();
+  const download1 = await download1Promise;
+  const download2Promise = page.waitForEvent('download');
+  await page.locator('#mifid-iframe').contentFrame().getByRole('link', { name: 'Download der Daten für DUSC' }).click();
+  const download2 = await download2Promise;
+  const download3Promise = page.waitForEvent('download');
+  await page.locator('#mifid-iframe').contentFrame().getByRole('link', { name: 'Download der Daten für DUSD' }).click();
+  const download3 = await download3Promise;
+  const download4Promise = page.waitForEvent('download');
+  await page.locator('#mifid-iframe').contentFrame().getByRole('link', { name: 'Download der Daten für HAMA' }).click();
+  const download4 = await download4Promise;
+  const download5Promise = page.waitForEvent('download');
+  await page.locator('#mifid-iframe').contentFrame().getByRole('link', { name: 'Download der Daten für HAMB' }).click();
+  const download5 = await download5Promise;
+  const download6Promise = page.waitForEvent('download');
+  await page.locator('#mifid-iframe').contentFrame().getByRole('link', { name: 'Download der Daten für HANA' }).click();
+  const download6 = await download6Promise;
+  const download7Promise = page.waitForEvent('download');
+  await page.locator('#mifid-iframe').contentFrame().getByRole('link', { name: 'Download der Daten für HANB' }).click();
+  const download7 = await download7Promise;
+});
