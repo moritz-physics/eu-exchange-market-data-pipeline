@@ -1,0 +1,10 @@
+schedule
+selenium
+requests
+urllib3
+joblib
+webdriver_manager
+aiohttp
+asyncio
+pytz
+nest_asyncio
