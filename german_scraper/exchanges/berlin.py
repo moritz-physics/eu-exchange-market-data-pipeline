@@ -1,4 +1,5 @@
 # german_scraper/exchanges/berlin.py
+#maybe check if posttrades works 
 
 import re
 from .base import Exchange

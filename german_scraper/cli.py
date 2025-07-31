@@ -6,16 +6,20 @@ from german_scraper.exchanges.berlin import Berlin
 from german_scraper.exchanges.lsx import LSX
 from german_scraper.exchanges.munich import Munich
 from german_scraper.exchanges.boersenag import BoersenAG
-
+from german_scraper.exchanges.athex import ATHEX
+from german_scraper.exchanges.bank_of_greece import BankOfGreece
+from german_scraper.exchanges.bucharest import Bucharest
 
 async def main(debug=True):
     pipeline = SaveLocalPipeline()
     async with PlaywrightClient().launch() as browser:
         scrapers = [
-            
+            #BankOfGreece(browser, pipeline, debug),
+            Bucharest(browser, pipeline, debug),
+            #ATHEX(browser, pipeline, debug),
             #BoersenAG(browser, pipeline, debug),
             #Berlin(browser, pipeline, debug),
-            LSX(browser, pipeline, debug),
+            #LSX(browser, pipeline, debug),
             #Munich(browser, pipeline, debug),
             
         ]
