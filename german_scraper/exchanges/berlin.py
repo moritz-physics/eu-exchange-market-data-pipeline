@@ -1,7 +1,9 @@
 # german_scraper/exchanges/berlin.py
-import re, pathlib
+
+import re
 from .base import Exchange
-from german_scraper.core.utils import click_first_consent, random_delay
+from german_scraper.core.utils import click_first_consent
+from german_scraper.core.throttle import random_delay
 
 PRE_URL  = "https://www.boerse-berlin.com/index.php/MiFid_2_Information/Pretrades"
 POST_URL = "https://www.boerse-berlin.com/index.php/MiFid_2_Information/Post_Trade"
@@ -14,17 +16,24 @@ class Berlin(Exchange):
         await click_first_consent(page)
         links = await page.locator("a").filter(has_text=re.compile(regex, re.I)).all()
         print(f"🔍 {self.name}: {len(links)} links on {url}")
+
         for i, link in enumerate(links, 1):
             text = (await link.text_content()).strip()
-            print(f"  [{i}/{len(links)}] {text}")
             if self.debug:
+                print(f"(DEBUG) [{i}/{len(links)}] Would download: {text}")
                 await random_delay(1, 3)
                 continue
+
+            if self.pipeline.has_seen(text):
+                print(f"(SKIP) [{i}/{len(links)}] Already downloaded: {text}")
+                continue
+
+            print(f"⬇️  [{i}/{len(links)}] Downloading: {text}")
             async with page.expect_download() as dl_info:
                 await link.click()
             download = await dl_info.value
             await self.pipeline.save(download, sub)
-            await random_delay(2, 8)
+            await random_delay(2, 6)
 
     async def run(self):
         page = await self.browser.new_page()

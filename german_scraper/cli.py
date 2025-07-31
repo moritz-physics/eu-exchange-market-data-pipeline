@@ -5,14 +5,19 @@ from german_scraper.pipelines.save_local import SaveLocalPipeline
 from german_scraper.exchanges.berlin import Berlin
 from german_scraper.exchanges.lsx import LSX
 from german_scraper.exchanges.munich import Munich
+from german_scraper.exchanges.boersenag import BoersenAG
+
 
 async def main(debug=True):
     pipeline = SaveLocalPipeline()
     async with PlaywrightClient().launch() as browser:
         scrapers = [
-            Berlin(browser, pipeline, debug),
+            
+            #BoersenAG(browser, pipeline, debug),
+            #Berlin(browser, pipeline, debug),
             LSX(browser, pipeline, debug),
-            Munich(browser, pipeline, debug),
+            #Munich(browser, pipeline, debug),
+            
         ]
         for s in scrapers:
             print(f"\n=== {s.name} ===")
