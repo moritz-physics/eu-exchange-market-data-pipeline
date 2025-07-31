@@ -8,3 +8,5 @@ aiohttp
 asyncio
 pytz
 nest_asyncio
+playwright==1.44.0
+rich
