@@ -1,8 +1,20 @@
 # german_scraper/exchanges/lsx.py
 import re
 from .base import Exchange
-from german_scraper.core.utils import click_first_consent
 from german_scraper.core.throttle import random_delay
+
+async def click_akzeptieren(page):
+    """
+    Wait for and click the 'Akzeptieren' consent button if present.
+    """
+    try:
+        btn = page.locator("button.btn.btn-primary.accept")
+        await btn.wait_for(state="visible", timeout=10000)
+        await btn.click()
+        print("🍪 Clicked 'Akzeptieren' consent button")
+        await page.wait_for_timeout(400)
+    except Exception as e:
+        print(f"⚠️  No 'Akzeptieren' button found or failed to click: {e}")
 
 class LSX(Exchange):
     name = "Lang & Schwarz (ls-x.de)"
@@ -10,7 +22,7 @@ class LSX(Exchange):
     async def run(self):
         page = await self.browser.new_page()
         await page.goto("https://www.ls-x.de/de/download")
-        await click_first_consent(page)
+        await click_akzeptieren(page)
 
         # ― Heute Download
         btn = page.get_by_role("row", name=re.compile("Heute Download", re.I)).get_by_role("button")
@@ -24,7 +36,8 @@ class LSX(Exchange):
             else:
                 async with page.expect_download() as dl:
                     await btn.click()
-                await self.pipeline.save(dl.value, "lsx")
+                download = await dl.value  # <-- await here!
+                await self.pipeline.save(download, "lsx")
                 await random_delay(2, 4)
 
         # ― Pre-trade links
@@ -44,6 +57,7 @@ class LSX(Exchange):
             print(f"⬇️  [{i}/{len(links)}] Downloading: {text}")
             async with page.expect_download() as dl:
                 await link.click()
-            await self.pipeline.save(dl.value, "lsx")
+            download = await dl.value  # <-- await here!
+            await self.pipeline.save(download, "lsx")
             await random_delay(2, 4)
         await page.close()
