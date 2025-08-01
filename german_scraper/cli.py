@@ -12,21 +12,24 @@ from german_scraper.exchanges.bank_of_greece import BankOfGreece
 from german_scraper.exchanges.bucharest import Bucharest
 from german_scraper.exchanges.cboe import Cboe
 from german_scraper.exchanges.bme import BME
+from german_scraper.exchanges.wienerboerse import WienerBoerse
 
 
 async def main(debug=True):
     pipeline = SaveLocalPipeline()
     async with PlaywrightClient().launch() as browser:
         scrapers = [
+            
             #BME(browser, pipeline, debug),
             #Cboe(browser, pipeline, debug),
             #BankOfGreece(browser, pipeline, debug),
             #Bucharest(browser, pipeline, debug),
             #ATHEX(browser, pipeline, debug),
             #BoersenAG(browser, pipeline, debug),
-            Berlin(browser, pipeline, debug),
+            #Berlin(browser, pipeline, debug),
             #LSX(browser, pipeline, debug),
             #Munich(browser, pipeline, debug),
+            #WienerBoerse(browser, pipeline, debug), #UNSTABLE
             
         ]
         for s in scrapers:

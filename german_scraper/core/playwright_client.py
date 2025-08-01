@@ -7,7 +7,9 @@ class PlaywrightClient:
     @asynccontextmanager
     async def launch(self):
         async with async_playwright() as p:
-            browser = await p.chromium.launch(headless=False)
+            browser = await p.chromium.launch(headless=False)  # Set headless=True for production
+            # browser = await p.chromium.launch(headless=True)  # Use Chromium if preferred
+            # browser = await p.webkit.launch(headless=True)  # Use WebKit if preferred
             try:
                 yield browser
             finally:
