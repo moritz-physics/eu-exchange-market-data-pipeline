@@ -4,6 +4,26 @@ import json
 from pathlib import Path
 
 
+# Add to SaveLocalPipeline:
+async def save(self, download, subdir: str):
+    # download can be a Playwright Download object OR (filename, bytes) tuple
+    sub = self.ROOT / subdir
+    sub.mkdir(parents=True, exist_ok=True)
+    if isinstance(download, tuple):
+        filename, data = download
+        target = sub / filename
+        if self.has_seen(filename):
+            print(f"⚠️  Already downloaded, skipping: {filename}")
+            return None
+        with open(target, "wb") as f:
+            f.write(data)
+        print(f"⬇️  Saved → {target}")
+        self.mark_seen(filename)
+        return target
+    else:
+        # Playwright download
+        ...
+
 
 class SaveLocalPipeline:
     ROOT = Path("downloads")
