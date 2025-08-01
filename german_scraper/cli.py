@@ -24,8 +24,8 @@ async def main(debug=True):
             #Bucharest(browser, pipeline, debug),
             #ATHEX(browser, pipeline, debug),
             #BoersenAG(browser, pipeline, debug),
-            #Berlin(browser, pipeline, debug),
-            LSX(browser, pipeline, debug),
+            Berlin(browser, pipeline, debug),
+            #LSX(browser, pipeline, debug),
             #Munich(browser, pipeline, debug),
             
         ]
@@ -37,4 +37,4 @@ async def main(debug=True):
                 print(f"❌ {s.name} failed: {e}")
 
 if __name__ == "__main__":
-    asyncio.run(main(debug=False))   # ← set True for dry run
+    asyncio.run(main(debug=True))   # ← set True for dry run
