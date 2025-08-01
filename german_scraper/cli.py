@@ -1,5 +1,6 @@
 # german_scraper/cli.py
 import asyncio
+from encodings.punycode import T
 from german_scraper.core.playwright_client import PlaywrightClient
 from german_scraper.pipelines.save_local import SaveLocalPipeline
 from german_scraper.exchanges.berlin import Berlin
