@@ -13,6 +13,8 @@ from german_scraper.exchanges.bucharest import Bucharest
 from german_scraper.exchanges.cboe import Cboe
 from german_scraper.exchanges.bme import BME
 from german_scraper.exchanges.wienerboerse import WienerBoerse
+from german_scraper.exchanges.berlin_cron import BerlinCron
+
 
 
 async def main(debug=True):
@@ -26,10 +28,11 @@ async def main(debug=True):
             #Bucharest(browser, pipeline, debug),
             #ATHEX(browser, pipeline, debug),
             #BoersenAG(browser, pipeline, debug),
-            #Berlin(browser, pipeline, debug),
-            #LSX(browser, pipeline, debug),
-            #Munich(browser, pipeline, debug),
-            #WienerBoerse(browser, pipeline, debug), #UNSTABLE
+            #Berlin(browser, pipeline, debug),  #works quite well, but might need some robustness work
+            #LSX(browser, pipeline, debug),     #works quite well, but might need some robustness work
+            #Munich(browser, pipeline, debug),  #feedback wanted for real download process, couldn´t test, bc files are too large
+            #WienerBoerse(browser, pipeline, debug), #UNSTABLE because of the reCAPTCHA
+            BerlinCron(browser, pipeline, debug),
             
         ]
         for s in scrapers:

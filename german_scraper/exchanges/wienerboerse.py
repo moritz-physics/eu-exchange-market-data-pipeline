@@ -1,8 +1,5 @@
-# german_scraper/exchanges/wienerboerse.py
-#works sometimes but also fails sometimes i dont yet know why
-
-import random
-import asyncio
+import random, asyncio
+from playwright.async_api import TimeoutError
 from .base import Exchange
 from german_scraper.core.throttle import random_delay
 
@@ -12,52 +9,69 @@ URLS = [
     ("Prices Tab 4", "https://prices.wienerborse.at/#tab-content4"),
 ]
 
+MAX_RELOADS_PER_TAB = 1            # at most one reload if JS didn’t appear
+ONCLICK_WAIT_MS      = 15_000      # how long to wait for the onClick() fn
+
 class WienerBoerse(Exchange):
     name = "Wiener Börse"
+
+    async def _trigger_download_via_js(self, page) -> str | None:
+        """
+        If the page defines a global onClick() that triggers the ZIP download,
+        call it via JS and return the file-name hint (link text) if possible.
+        Returns None if onClick not found.
+        """
+        try:
+            # wait until the function exists in the page context
+            await page.wait_for_function("typeof onClick === 'function'",
+                                         timeout=ONCLICK_WAIT_MS)
+        except TimeoutError:
+            return None
+
+        # call the JS function that would be invoked by the button
+        async with page.expect_download() as dl_info:
+            await page.evaluate("onClick()")
+        download = await dl_info.value
+        return download
 
     async def run(self):
         page = await self.browser.new_page()
 
         for tab_name, url in URLS:
-            print(f"\n🔗 Navigating to: {url} ({tab_name})")
-            await page.goto(url)
-            wait_time = random.uniform(5, 8)
-            print(f"⏳ Waiting {wait_time:.1f} seconds for page to load...")
-            await asyncio.sleep(wait_time)
+            print(f"\n🔗 Navigating to {url} ({tab_name})")
+            reloads_left = MAX_RELOADS_PER_TAB
 
-            # Special reload for Tab 2 (first in the list)
-            if tab_name == "Prices Tab 2":
-                print("🔄 Reloading Tab 2 page once to ensure full load...")
-                await page.reload()
-                wait_time = random.uniform(5, 7)
-                print(f"⏳ Waiting {wait_time:.1f} seconds after reload...")
+            while True:
+                await page.goto(url)
+                wait_time = random.uniform(5, 8)
+                print(f"⏳ Waiting {wait_time:.1f}s for JS to load…")
                 await asyncio.sleep(wait_time)
 
-            btn = page.locator("button.downloadbtn.btn.btn-primary")
-            try:
-                await btn.wait_for(state="visible", timeout=15000)
-            except Exception:
-                print(f"⚠️  Download button not found on {tab_name}, skipping.")
-                continue
+                # try to trigger the download via JS
+                download = await self._trigger_download_via_js(page)
+                if download:
+                    filename = download.suggested_filename
+                    label    = f"{tab_name}: {filename}"
 
-            btn_text = await btn.text_content()
-            btn_label = f"{tab_name}: {btn_text.strip() if btn_text else 'Download'}"
-            print(f"🟢 Found button: {btn_label}")
+                    if self.debug:
+                        print(f"(DEBUG) Would download {label}")
+                    elif self.pipeline.has_seen(label):
+                        print(f"(SKIP) Already have {label}")
+                    else:
+                        print(f"⬇️  Saving {label}")
+                        await self.pipeline.save(download, "wienerboerse")
+                    await random_delay(2, 4)
+                    break  # success, go to next tab
 
-            if self.debug:
-                print(f"(DEBUG) Would click {btn_label}")
-                await random_delay(1, 2)
-                continue
-
-            if self.pipeline.has_seen(btn_label):
-                print(f"(SKIP) Already downloaded: {btn_label}")
-                continue
-
-            print(f"⬇️  Clicking to download: {btn_label}")
-            async with page.expect_download() as dl_info:
-                await btn.click()
-            download = await dl_info.value
-            await self.pipeline.save(download, "wienerboerse")
-            await random_delay(2, 4)
+                # JS not ready → optionally reload once
+                if reloads_left:
+                    reloads_left -= 1
+                    extra_wait = random.uniform(5, 7)
+                    print(f"🔄 Reloading once (JS not ready). Waiting {extra_wait:.1f}s…")
+                    await asyncio.sleep(extra_wait)
+                    continue
+                else:
+                    print(f"⚠️  Gave up on {tab_name} – onClick() never appeared.")
+                    break
 
         await page.close()
