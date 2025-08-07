@@ -14,8 +14,9 @@ from german_scraper.exchanges.cboe import Cboe
 from german_scraper.exchanges.bme import BME
 from german_scraper.exchanges.wienerboerse import WienerBoerse
 from german_scraper.exchanges.berlin_cron import BerlinCron
-
-
+from german_scraper.exchanges.ice import ICE
+from german_scraper.exchanges.ice_post import ICEPost
+from german_scraper.exchanges.wienerboerse_stealth import WienerBoerseStealth
 
 async def main(debug=True):
     pipeline = SaveLocalPipeline()
@@ -32,7 +33,12 @@ async def main(debug=True):
             #LSX(browser, pipeline, debug),     #works quite well, but might need some robustness work
             #Munich(browser, pipeline, debug),  #feedback wanted for real download process, couldn´t test, bc files are too large
             #WienerBoerse(browser, pipeline, debug), #UNSTABLE because of the reCAPTCHA
-            BerlinCron(browser, pipeline, debug),
+            #ICE(browser, pipeline, debug),    # has a two facor authentication, so terminal will aks you for PW
+            #BerlinCron(browser, pipeline, debug),
+            ICEPost(browser, pipeline, debug),
+            #WienerBoerseStealth(browser, pipeline, debug),
+            
+
             
         ]
         for s in scrapers:
