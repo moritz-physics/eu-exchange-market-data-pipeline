@@ -17,6 +17,8 @@ from german_scraper.exchanges.berlin_cron import BerlinCron
 from german_scraper.exchanges.ice import ICE
 from german_scraper.exchanges.ice_post import ICEPost
 from german_scraper.exchanges.wienerboerse_stealth import WienerBoerseStealth
+from german_scraper.exchanges.luxse import LuxSE
+from german_scraper.exchanges.bratislava import Bratislava
 
 async def main(debug=True):
     pipeline = SaveLocalPipeline()
@@ -36,6 +38,8 @@ async def main(debug=True):
             #ICE(browser, pipeline, debug),    # has a two facor authentication, so terminal will aks you for PW
             #BerlinCron(browser, pipeline, debug),
             ICEPost(browser, pipeline, debug),
+            LuxSE(browser, pipeline, debug),
+            #Bratislava(browser, pipeline, debug), probably still unstable 
             #WienerBoerseStealth(browser, pipeline, debug),
             
 
