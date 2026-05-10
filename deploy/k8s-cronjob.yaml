@@ -1,0 +1,123 @@
+# Example Kubernetes CronJob: scrape every 30 minutes, ingest after.
+#
+# Mounts a PersistentVolumeClaim at /var/lib/eu-scraper for the SQLite
+# manifest and the warehouse. Secrets (ICE creds, IMAP creds) are
+# pulled from a Secret named "eu-scraper-secrets". Adjust namespace,
+# image registry, schedule, and resource requests for your cluster.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: eu-scraper-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: eu-scraper-scrape
+spec:
+  schedule: "*/30 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: scrape
+              image: ghcr.io/your-org/eu-scraper:latest
+              imagePullPolicy: IfNotPresent
+              args: ["scrape", "--exchanges", "berlin,cboe,athex", "--no-debug"]
+              envFrom:
+                - secretRef:
+                    name: eu-scraper-secrets
+              env:
+                - name: STORAGE_BACKEND
+                  value: s3
+                - name: STORAGE_S3_BUCKET
+                  value: eu-finance-research
+                - name: STORAGE_S3_PREFIX
+                  value: eu-exchanges/v1
+                - name: CONCURRENCY
+                  value: "4"
+              resources:
+                requests:
+                  cpu: "1"
+                  memory: 1Gi
+                limits:
+                  cpu: "2"
+                  memory: 4Gi
+              volumeMounts:
+                - name: data
+                  mountPath: /var/lib/eu-scraper
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: eu-scraper-data
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: eu-scraper-ingest
+spec:
+  # Run a few minutes after each scrape.
+  schedule: "5,35 * * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 5
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: ingest
+              image: ghcr.io/your-org/eu-scraper:latest
+              args: ["ingest"]
+              envFrom:
+                - secretRef:
+                    name: eu-scraper-secrets
+              env:
+                - name: STORAGE_BACKEND
+                  value: s3
+                - name: STORAGE_S3_BUCKET
+                  value: eu-finance-research
+                - name: INSTRUMENT_MASTER_PATH
+                  value: /var/lib/eu-scraper/instruments.csv
+              volumeMounts:
+                - name: data
+                  mountPath: /var/lib/eu-scraper
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: eu-scraper-data
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: eu-scraper-dq
+spec:
+  # Daily DQ check at 06:00 UTC; non-zero exit alerts via PrometheusRule.
+  schedule: "0 6 * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+            - name: dq
+              image: ghcr.io/your-org/eu-scraper:latest
+              args: ["dq", "--window-hours", "24"]
+              volumeMounts:
+                - name: data
+                  mountPath: /var/lib/eu-scraper
+          volumes:
+            - name: data
+              persistentVolumeClaim:
+                claimName: eu-scraper-data

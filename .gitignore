@@ -1,3 +1,10 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
 
 # Playwright
 node_modules/
@@ -5,10 +12,26 @@ node_modules/
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+
+# Excel temp + auto-saves
 *.xlsx
 *.xls
 ~$*
+
+# Virtual environments
 .venv/
-downloads/
-.DS_Store
 eu-exchange-env/
+
+# Scraper outputs (raw bronze) — never commit downloaded data
+downloads/
+data/
+warehouse/
+
+# Local manifest / catalog state
+manifest.db
+manifest.db-journal
+*.duckdb
+
+# OS noise
+.DS_Store
+.Rhistory

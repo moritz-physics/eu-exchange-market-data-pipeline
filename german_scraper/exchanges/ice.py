@@ -1,7 +1,12 @@
 """ICE delayed pre-trade scraper.
 
-Reads credentials from the environment (``ICE_EMAIL``, ``ICE_PASSWORD``);
-prompts interactively for the 2FA code on each run.
+Login flow:
+    * email/password from env (``ICE_EMAIL`` / ``ICE_PASSWORD``)
+    * 2FA from ``ICE_TOTP_SECRET`` if present, else interactive prompt
+      (which fails fast on a non-TTY so it never silently hangs)
+
+Subclasses (e.g. :class:`ICEPost`) only need to override the
+``report_url`` and ``label_prefix`` class attributes.
 """
 from __future__ import annotations
 
@@ -13,20 +18,21 @@ import re
 from playwright.async_api import Page, TimeoutError
 
 from .base import Exchange
-from german_scraper.core.throttle import random_delay
+from german_scraper.core.totp import get_totp_code
 
 PAGE_LOAD_WAIT: tuple[float, float] = (2.0, 4.0)
-ICE_REPORT_URL: str = "https://www.ice.com/report/60"
 
 
 class ICE(Exchange):
-    """ICE Exchange pre-trade scraper (paginated download buttons)."""
+    """ICE Exchange delayed-trade scraper (paginated table of buttons)."""
 
     name: str = "ICE Exchange"
+    report_url: str = "https://www.ice.com/report/60"
+    label_prefix: str = "ICE"
+    download_subdir: str = "ice"
 
     @staticmethod
     def _credentials() -> tuple[str, str]:
-        """Pull ICE_EMAIL/ICE_PASSWORD from env; fail loudly if missing."""
         email = os.environ.get("ICE_EMAIL")
         password = os.environ.get("ICE_PASSWORD")
         if not email or not password:
@@ -50,9 +56,9 @@ class ICE(Exchange):
             self.logger.debug("ICE cookie banner not present")
 
     async def _login(self, page: Page) -> None:
-        """Fill in credentials and prompt the user for a 2FA code."""
+        """Fill in credentials and enter the 2FA code (TOTP or stdin fallback)."""
         email, password = self._credentials()
-        await page.goto(ICE_REPORT_URL)
+        await page.goto(self.report_url)
         await self._accept_cookies(page)
         await page.get_by_role(
             "link", name=re.compile("click here to login", re.I)
@@ -65,15 +71,14 @@ class ICE(Exchange):
         await page.get_by_role("textbox", name=re.compile("Password", re.I)).fill(password)
         await page.get_by_role("button", name=re.compile("^Login$", re.I)).click()
 
-        twofa = input("\nPlease enter your ICE 2FA code: ")
+        twofa = get_totp_code("ICE_TOTP_SECRET", prompt_label="ICE")
         await page.get_by_role(
             "textbox", name=re.compile("2FA Passcode", re.I)
         ).fill(twofa)
         await page.get_by_role("button", name=re.compile("^Login$", re.I)).click()
-        self.logger.info("Logged in to ICE")
+        self.logger.info("Logged in to %s", self.label_prefix)
 
     async def _download_buttons_on_page(self, page: Page, page_idx: int) -> int:
-        """Click every download button in the results table on the current page."""
         rows = page.locator("tr")
         buttons = rows.locator("button")
         n = await buttons.count()
@@ -81,9 +86,9 @@ class ICE(Exchange):
         for i in range(n):
             btn = buttons.nth(i)
             row_text = await btn.locator("xpath=..").text_content() or f"row{i}"
-            label = f"ICE page {page_idx}: {row_text.strip()}"
+            label = f"{self.label_prefix} page {page_idx}: {row_text.strip()}"
             saved = await self._download_via_click(
-                page, btn, "ice", label, post_delay=(0.3, 0.7),
+                page, btn, self.download_subdir, label, post_delay=(0.3, 0.7),
             )
             if saved:
                 new_files += 1
@@ -109,6 +114,7 @@ class ICE(Exchange):
                 except TimeoutError:
                     self.logger.info("No 'Next' link found — last page")
                     break
-            self.logger.info("ICE finished — new files this run: %d", total_new)
+            self.logger.info("%s finished — new files this run: %d",
+                             self.label_prefix, total_new)
         finally:
             await page.close()

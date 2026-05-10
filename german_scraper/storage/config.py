@@ -25,12 +25,17 @@ import os
 from dataclasses import dataclass
 
 from german_scraper.core.logging_config import get_logger
+from typing import TYPE_CHECKING
+
 from german_scraper.storage.backends import (
     LocalBackend,
     NFSBackend,
     S3Backend,
     StorageBackend,
 )
+
+if TYPE_CHECKING:
+    from german_scraper.storage.parquet_writer import ParquetWriter  # noqa: F401
 
 logger = get_logger(__name__)
 
@@ -99,10 +104,11 @@ class StorageConfig:
         return cfg
 
 
-def get_default_writer():
+def get_default_writer() -> "ParquetWriter":
     """Return a :class:`ParquetWriter` configured from environment variables."""
     from german_scraper.storage.parquet_writer import ParquetWriter
     cfg = StorageConfig.from_env()
+    _ = cfg.dry_run  # ensure attr access for mypy
     return ParquetWriter(
         backend=cfg.backend,
         compression=cfg.compression,

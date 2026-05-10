@@ -1,13 +1,12 @@
-"""Reproducible end-to-end dry-run of the storage layer.
+"""End-to-end dry-run of the silver storage layer.
 
 Run with:
     DRY_RUN=true uv run python -m german_scraper.storage.dry_run_demo
 
-This produces synthetic records covering the four canonical record shapes
-this pipeline emits in production — pre-trade quote, post-trade trade,
-order-book snapshot, OHLCV bar — and feeds them through
-:class:`ParquetWriter`. The simulation report shown is exactly what a
-real ingestion pass would print.
+Builds a representative mix of trade, quote, and bar records — touching
+every column the silver schemas define — and runs them through
+:class:`ParquetWriter`. Output mirrors what an ingest pass on real
+bronze data would produce.
 """
 from __future__ import annotations
 
@@ -16,103 +15,129 @@ from datetime import datetime, timezone
 
 from german_scraper.core.logging_config import configure_logging
 from german_scraper.storage import (
+    BarRecord,
     DataType,
+    QuoteRecord,
     StorageConfig,
-    UnifiedRecord,
+    TradeFlag,
+    TradeRecord,
 )
 from german_scraper.storage.parquet_writer import ParquetWriter
 
 
-def _build_sample_records() -> list[UnifiedRecord]:
-    """A handful of records spanning every shape the schema supports."""
+def _build_sample_records() -> list:
     base = datetime(2025, 8, 1, 9, 30, 0, tzinfo=timezone.utc)
-    return [
-        # post-trade equity execution (Boerse Berlin / RTS-13 style)
-        UnifiedRecord(
+    received = datetime(2025, 8, 1, 9, 45, 0, tzinfo=timezone.utc)  # 15-min delay
+
+    trades = [
+        TradeRecord(
             event_ts=base,
+            publication_ts=received,
+            received_ts=received,
+            seq=1,
             exchange="BERA",
             mic="BERA",
             data_type=DataType.POST_TRADE.value,
+            isin="DE0007164600",
+            ticker="SAP",
             instrument_type="equity",
-            instrument_id="DE0007164600",
-            instrument_id_type="ISIN",
             currency="EUR",
             trade_price=42.78,
             trade_size=125.0,
             trade_id="BERA-20250801-0001",
             notional=42.78 * 125.0,
-            trade_flags="LRGS",
+            side="buy",
+            trade_flags_raw="LRGS",
+            trade_flag_canonical=TradeFlag.LARGE_IN_SCALE.value,
             source_file="Mifir13DelayedDataPT_BERA_00000007_20250801.csv",
+            source_msg_hash="hash-bera-1",
         ),
-        UnifiedRecord(
-            event_ts=base.replace(hour=9, minute=31),
+        TradeRecord(
+            event_ts=base.replace(minute=31),
+            received_ts=received,
+            seq=2,
             exchange="BERA",
             mic="BERA",
             data_type=DataType.POST_TRADE.value,
+            isin="DE0007164600",
+            ticker="SAP",
             instrument_type="equity",
-            instrument_id="DE0007164600",
-            instrument_id_type="ISIN",
             currency="EUR",
             trade_price=42.81,
             trade_size=80.0,
             trade_id="BERA-20250801-0002",
             notional=42.81 * 80.0,
+            trade_flag_canonical=TradeFlag.NORMAL.value,
             source_file="Mifir13DelayedDataPT_BERA_00000007_20250801.csv",
+            source_msg_hash="hash-bera-2",
         ),
-
-        # pre-trade quote (Cboe Europe BXE)
-        UnifiedRecord(
+        TradeRecord(
             event_ts=base,
+            received_ts=received,
+            seq=1,
+            exchange="ICE",
+            mic="IFEU",
+            data_type=DataType.POST_TRADE.value,
+            venue_instrument_id="BRN-Z25",
+            instrument_type="energy",
+            currency="USD",
+            trade_price=82.34,
+            trade_size=10.0,
+            trade_id="ICE-BRN-Z25-001",
+            notional=823_400.0,
+            trade_flag_canonical=TradeFlag.NORMAL.value,
+            source_file="ice_post_brn_z25.csv",
+            source_msg_hash="hash-ice-1",
+        ),
+    ]
+
+    quotes = [
+        QuoteRecord(
+            event_ts=base,
+            received_ts=received,
+            seq=1,
             exchange="CBOE-BXE",
             mic="BATE",
             data_type=DataType.PRE_TRADE.value,
+            isin="GB00B16GWD56",
+            ticker="VOD",
             instrument_type="equity",
-            instrument_id="GB00B16GWD56",
-            instrument_id_type="ISIN",
             currency="GBP",
             bid_price=12.345,
             bid_size=500.0,
             ask_price=12.350,
             ask_size=400.0,
             book_level=1,
+            snapshot=True,
             source_file="rts13_public_trade_data_bxe_2025-08-01_09.csv",
+            source_msg_hash="hash-bxe-1",
         ),
+    ]
 
-        # bond OHLCV bar (Bank of Greece HDAT)
-        UnifiedRecord(
+    bars = [
+        BarRecord(
             event_ts=base,
+            received_ts=received,
             exchange="BOG-HDAT",
             mic="HDAT",
             data_type=DataType.POST_TRADE.value,
+            isin="GR0114030555",
             instrument_type="bond",
-            instrument_id="GR0114030555",
-            instrument_id_type="ISIN",
             currency="EUR",
+            bar_interval="1d",
             open=99.85,
             high=100.05,
             low=99.80,
             close=99.95,
             volume=2_500_000.0,
+            vwap=99.94,
+            trades_count=37,
             source_file="PostTradeHDAT.json",
-        ),
-
-        # energy futures execution (ICE)
-        UnifiedRecord(
-            event_ts=base,
-            exchange="ICE",
-            mic="IFEU",
-            data_type=DataType.POST_TRADE.value,
-            instrument_type="energy",
-            instrument_id="BRN-Z25",
-            instrument_id_type="INTERNAL",
-            currency="USD",
-            trade_price=82.34,
-            trade_size=10.0,
-            trade_id="ICE-BRN-Z25-001",
-            notional=823_400.0,
-            source_file="ice_post_brn_z25.csv",
+            source_msg_hash="hash-bog-1",
         ),
     ]
+
+    return trades + quotes + bars
 
 
 def main() -> None:

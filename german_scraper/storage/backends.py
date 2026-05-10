@@ -12,7 +12,7 @@ from __future__ import annotations
 import io
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from german_scraper.core.logging_config import get_logger
 
@@ -92,7 +92,10 @@ class S3Backend(StorageBackend):
         self.region_name = region_name
         self._client = None  # lazy
 
-    def _get_client(self):
+    def _get_client(self) -> Any:
+        # boto3 has no public typestubs we can pin to without an extra dep,
+        # so we model its client as ``Any``. The contract is exercised by
+        # the integration test rather than the type checker.
         if self._client is None:
             try:
                 import boto3  # type: ignore
@@ -112,8 +115,26 @@ class S3Backend(StorageBackend):
         return f"{self.prefix}/{key}" if self.prefix else key
 
     def write_bytes(self, key: str, payload: bytes) -> str:
+        """Atomic-ish write: upload to a staging key, then copy to final.
+
+        S3 uploads aren't transactional — a crash mid-PUT leaves a
+        partial object that the next ``HeadObject`` will succeed on,
+        making it look 'present'. Staging-then-copy gives the next run
+        a clear 'in-flight vs. committed' signal: only objects under
+        the final key are real. ``CopyObject`` + ``DeleteObject`` are
+        each atomic, and the pair is idempotent on retry.
+        """
+        import uuid
         full_key = self._full_key(key)
-        self._get_client().upload_fileobj(io.BytesIO(payload), self.bucket, full_key)
+        staging_key = f"{full_key}.staging-{uuid.uuid4().hex[:12]}"
+        client = self._get_client()
+        client.upload_fileobj(io.BytesIO(payload), self.bucket, staging_key)
+        client.copy_object(
+            Bucket=self.bucket,
+            Key=full_key,
+            CopySource={"Bucket": self.bucket, "Key": staging_key},
+        )
+        client.delete_object(Bucket=self.bucket, Key=staging_key)
         uri = f"s3://{self.bucket}/{full_key}"
         logger.info("S3Backend wrote %d bytes to %s", len(payload), uri)
         return uri

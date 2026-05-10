@@ -1,7 +1,7 @@
 [project]
 name = "playwrite-vs-extention"
 version = "0.1.0"
-description = "Add your description here"
+description = "EU exchange pre & post trade data acquisition pipeline"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -15,5 +15,38 @@ dependencies = [
     "pyarrow>=24.0.0",
     "pytz>=2026.2",
     "requests>=2.33.1",
-    "rich>=15.0.0",
+    "rich>=13.7,<15",
+    "pyotp>=2.9.0",
+    "typer>=0.12",
 ]
+
+[project.scripts]
+eu-scraper = "german_scraper.cli:app_main"
+
+[project.optional-dependencies]
+# pyiceberg is pre-1.0; pin the major series we tested against.
+iceberg = ["pyiceberg[sql-sqlite,pyarrow]>=0.7,<0.12"]
+s3 = ["boto3>=1.34"]
+dev = [
+    "pytest>=8",
+    "pytest-asyncio>=0.23",
+    "mypy>=1.10",
+    "ruff>=0.5",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests_python"]
+asyncio_mode = "auto"
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.mypy]
+python_version = "3.12"
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_optional = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = "german_scraper.storage.*"
+disallow_untyped_defs = true
+disallow_incomplete_defs = true

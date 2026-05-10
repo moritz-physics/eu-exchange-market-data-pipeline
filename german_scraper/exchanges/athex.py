@@ -1,8 +1,9 @@
 """ATHEX (Greek Exchanges) delayed-feed scraper.
 
-Three sections — APA Post-Trade, ATHEX Pre-Trade, ATHEX Post-Trade — each
-behind a "View All" modal. CSV links inside the modal are deduplicated by
-filename before download.
+Three sections — APA Post-Trade, ATHEX Pre-Trade, ATHEX Post-Trade —
+each behind a "View All" modal. CSV anchors inside the modal are
+deduplicated by filename, then streamed over HTTP (the modal is purely
+a UI gate; the hrefs are direct CSV URLs).
 """
 from __future__ import annotations
 
@@ -11,6 +12,7 @@ from typing import Optional
 
 from playwright.async_api import Page
 
+from german_scraper.core.http_downloader import collect_anchor_urls
 from .base import Exchange
 
 SECTIONS: list[dict[str, str]] = [
@@ -52,21 +54,19 @@ class ATHEX(Exchange):
             '#athexGlobalModal a[href$=".csv"]', timeout=15_000
         )
 
-        anchors = await page.locator('#athexGlobalModal a[href$=".csv"]').all()
-        files: dict[str, object] = {}
-        for a in anchors:
-            href: Optional[str] = await a.get_attribute("href")
-            if href:
-                filename = href.split("/")[-1]
-                files[filename] = a
+        labelled = await collect_anchor_urls(
+            page, '#athexGlobalModal a[href$=".csv"]'
+        )
+        # Dedupe by filename — the modal often lists the same file under
+        # multiple human-readable labels.
+        files: dict[str, str] = {}
+        for _label, href in labelled:
+            files[href.rsplit("/", 1)[-1]] = href
 
         self.logger.info("%d unique file(s) detected", len(files))
-        for filename, anchor in files.items():
-            await self._download_via_click(
-                page,
-                anchor,  # type: ignore[arg-type]
-                f"athex/{section['name']}",
-                filename,
+        for filename, href in files.items():
+            await self._download_via_http(
+                page, href, f"athex/{section['name']}", filename,
                 post_delay=(0.1, 0.3),
             )
 

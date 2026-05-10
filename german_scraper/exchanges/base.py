@@ -4,9 +4,11 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import TYPE_CHECKING
 
-from playwright.async_api import Browser, Locator, Page
+from playwright.async_api import Browser, BrowserContext, Locator, Page
 
+from german_scraper.core.http_downloader import http_download
 from german_scraper.core.logging_config import get_logger
+from german_scraper.core.metrics import METRICS
 from german_scraper.core.retry import with_retry
 from german_scraper.core.throttle import random_delay
 
@@ -27,10 +29,13 @@ class Exchange(ABC):
 
     def __init__(
         self,
-        browser: Browser,
+        browser: Browser | BrowserContext,
         pipeline: "SaveLocalPipeline",
         debug: bool = True,
     ) -> None:
+        # Both ``Browser`` and ``BrowserContext`` expose ``new_page()`` so
+        # the scrapers don't care which one they got. The CLI runner
+        # passes a per-scraper ``BrowserContext`` so cookies are isolated.
         self.browser = browser
         self.pipeline = pipeline
         self.debug = debug
@@ -84,7 +89,71 @@ class Exchange(ABC):
             )
         except Exception as exc:
             self.logger.error("Failed to download %s: %s", label, exc)
+            METRICS.inc(
+                "scraper_download_failures_total",
+                description="Download failures",
+                exchange=self.__class__.__name__, method="click",
+            )
             return False
 
+        METRICS.inc(
+            "scraper_files_total",
+            description="Files downloaded",
+            exchange=self.__class__.__name__, method="click",
+        )
         await random_delay(*post_delay)
         return saved
+
+    async def _download_via_http(
+        self,
+        page: Page,
+        url: str,
+        subdir: str,
+        label: str,
+        *,
+        post_delay: tuple[float, float] = (0.2, 0.6),
+        attempts: int = 3,
+    ) -> bool:
+        """Stream ``url`` over HTTP (cookies inherited from ``page``).
+
+        Honours ``self.debug`` and the manifest dedupe in the same way
+        as :meth:`_download_via_click`. Use this for plain ``<a href>``
+        links — it skips the browser's download mechanism entirely and
+        is roughly 10× faster.
+        """
+        if self.debug:
+            self.logger.info("(DEBUG) Would HTTP-download: %s", label)
+            await random_delay(*post_delay)
+            return False
+
+        if self.pipeline.has_seen(label):
+            self.logger.info("(SKIP) Already downloaded: %s", label)
+            return False
+
+        try:
+            filename, payload = await http_download(
+                url, page=page, attempts=attempts,
+            )
+        except Exception as exc:
+            self.logger.error("HTTP download failed for %s: %s", label, exc)
+            METRICS.inc(
+                "scraper_download_failures_total",
+                description="Download failures",
+                exchange=self.__class__.__name__, method="http",
+            )
+            return False
+
+        await self.pipeline.save((filename, payload), subdir)
+        METRICS.inc(
+            "scraper_files_total",
+            description="Files downloaded",
+            exchange=self.__class__.__name__, method="http",
+        )
+        METRICS.inc(
+            "scraper_bytes_total",
+            by=float(len(payload)),
+            description="Bytes downloaded",
+            exchange=self.__class__.__name__, method="http",
+        )
+        await random_delay(*post_delay)
+        return True

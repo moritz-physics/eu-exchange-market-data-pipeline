@@ -1,9 +1,13 @@
 """Börse Berlin pre & post-trade CSV scraper.
 
-Pre-trade and post-trade pages each list dozens to hundreds of CSV download
-anchors. This scraper batches downloads to ``MAX_FILES_PER_RUN`` per
-invocation and respects the manifest dedupe so subsequent runs only fetch
-new files.
+Pre-trade and post-trade pages each list dozens to hundreds of CSV
+download anchors. The HTTP fast path is used here — Playwright opens
+the page once for cookie consent and to read the anchor list, then each
+file streams over plain HTTP. Roughly 10× faster than triggering the
+browser's download mechanism per file.
+
+Batching to ``MAX_FILES_PER_RUN`` per invocation and manifest-based
+dedupe are preserved.
 """
 from __future__ import annotations
 
@@ -13,8 +17,8 @@ from typing import Optional
 
 from playwright.async_api import Page
 
+from german_scraper.core.http_downloader import collect_anchor_urls
 from .base import Exchange
-from german_scraper.core.throttle import random_delay
 from german_scraper.core.utils import click_first_consent
 
 PRE_URL: str = "https://www.boerse-berlin.com/index.php/MiFid_2_Information/Pretrades"
@@ -25,9 +29,20 @@ LONG_BREAK_SEC: int = 30
 
 
 class Berlin(Exchange):
-    """Boerse Berlin (boerse-berlin.com) – MiFID II delayed data."""
+    """Boerse Berlin (boerse-berlin.com) – MiFID II delayed data.
+
+    Subclass-style configuration:
+        ``max_files_per_run`` – cap on downloads per invocation (default 50).
+        ``long_break_sec``    – sleep after hitting the cap. Cron variants
+                                set this to 0 so the run exits cleanly.
+        ``post_delay``        – ``(min, max)`` seconds between downloads.
+                                Bigger values for cron variants to stay polite.
+    """
 
     name: str = "Börse Berlin"
+    max_files_per_run: int = MAX_FILES_PER_RUN
+    long_break_sec: int = LONG_BREAK_SEC
+    post_delay: tuple[float, float] = (0.2, 0.6)
 
     async def _process(
         self,
@@ -39,7 +54,7 @@ class Berlin(Exchange):
         use_href_csv: bool = False,
         use_type_attr: bool = False,
     ) -> None:
-        """Visit ``url`` and download every matching CSV anchor."""
+        """Visit ``url`` and HTTP-stream every matching CSV anchor."""
         await page.goto(url)
         await click_first_consent(page)
 
@@ -51,29 +66,26 @@ class Berlin(Exchange):
             selector = "a"
         await page.wait_for_selector(selector, timeout=15_000)
 
-        if use_type_attr or use_href_csv:
-            links = await page.locator(selector).all()
-        else:
-            links = await page.locator("a").filter(has_text=re.compile(regex, re.I)).all()
+        anchors = await collect_anchor_urls(page, selector)
+        if not (use_type_attr or use_href_csv):
+            pattern = re.compile(regex, re.I)
+            anchors = [(label, href) for label, href in anchors if pattern.search(label)]
 
-        self.logger.info("%s: %d links on %s", self.name, len(links), url)
+        self.logger.info("%s: %d links on %s", self.name, len(anchors), url)
 
         downloaded_this_run = 0
-        for i, link in enumerate(links, 1):
-            text: Optional[str] = await link.text_content()
-            label = (text or "").strip()
+        for label, href in anchors:
             if not label:
                 continue
-
-            if downloaded_this_run >= MAX_FILES_PER_RUN:
-                self.logger.warning("Reached batch limit (%d). Cooling off %ds.",
-                                    MAX_FILES_PER_RUN, LONG_BREAK_SEC)
-                if LONG_BREAK_SEC:
-                    await asyncio.sleep(LONG_BREAK_SEC)
+            if downloaded_this_run >= self.max_files_per_run:
+                self.logger.info("Reached batch limit (%d).", self.max_files_per_run)
+                if self.long_break_sec:
+                    self.logger.info("Cooling off %ds.", self.long_break_sec)
+                    await asyncio.sleep(self.long_break_sec)
                 break
 
-            saved = await self._download_via_click(
-                page, link, subdir, label, post_delay=(0.2, 0.6),
+            saved = await self._download_via_http(
+                page, href, subdir, label, post_delay=self.post_delay,
             )
             if saved:
                 downloaded_this_run += 1

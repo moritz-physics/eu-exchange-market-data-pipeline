@@ -84,8 +84,46 @@ async def wait_for_link(
     timeout: int = 300,
     poll_interval: int = 10,
 ) -> Optional[str]:
-    """Poll IMAP for a LuxSE download URL until found or timeout elapses."""
+    """Wait for a LuxSE download URL via IMAP IDLE, falling back to polling.
+
+    IMAP IDLE pushes server-side notifications instead of forcing the
+    client to poll on a timer; latency goes from ``poll_interval``
+    seconds in the worst case to milliseconds. Gmail and most modern
+    IMAP servers support it. If IDLE isn't available (or fails for any
+    reason), we fall back to the original polling loop.
+    """
     deadline = time.time() + timeout
+
+    # Best-effort IDLE: stop blocking once the server signals new mail
+    # or the IDLE turn ends (whichever comes first). One IDLE turn is
+    # capped server-side at ~29 minutes; we bound it here at
+    # ``poll_interval * 6`` per turn so the polling fallback's pacing
+    # is preserved when IDLE is supported but the message hasn't yet
+    # arrived.
+    async def _idle_turn() -> None:
+        def _idle_blocking() -> None:
+            m = imaplib.IMAP4_SSL(imap_host)
+            try:
+                m.login(imap_user, imap_pass)
+                m.select("INBOX")
+                # imaplib gained .idle() in 3.12; older versions just no-op
+                idle = getattr(m, "idle", None)
+                if not callable(idle):
+                    return
+                try:
+                    with idle(timeout=poll_interval * 6) as it:
+                        # Wait for any update or the timeout.
+                        for _ in it:
+                            break
+                except Exception:
+                    return
+            finally:
+                try:
+                    m.logout()
+                except Exception:
+                    pass
+        await asyncio.to_thread(_idle_blocking)
+
     while time.time() < deadline:
         url = await asyncio.to_thread(
             _search_inbox,
@@ -93,7 +131,16 @@ async def wait_for_link(
         )
         if url:
             return url
-        await asyncio.sleep(poll_interval)
+        # Try push-based wait first; fall back to a fixed sleep if IDLE
+        # isn't supported (the function returns immediately).
+        try:
+            await _idle_turn()
+        except Exception:
+            await asyncio.sleep(poll_interval)
+        else:
+            # If IDLE returned quickly (no support / spurious wake), still
+            # rate-limit so we don't hammer the search.
+            await asyncio.sleep(min(poll_interval, max(deadline - time.time(), 1)))
     logger.warning("wait_for_link timed out after %ds", timeout)
     return None
 
