@@ -5,3 +5,10 @@ node_modules/
 /playwright-report/
 /blob-report/
 /playwright/.cache/
+*.xlsx
+*.xls
+~$*
+.venv/
+downloads/
+.DS_Store
+eu-exchange-env/

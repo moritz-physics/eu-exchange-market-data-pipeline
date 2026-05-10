@@ -1,0 +1,19 @@
+[project]
+name = "playwrite-vs-extention"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "aiohttp>=3.13.5",
+    "asyncio>=4.0.0",
+    "joblib>=1.5.3",
+    "nest-asyncio>=1.6.0",
+    "numpy>=2.4.4",
+    "pandas>=3.0.2",
+    "playwright>=1.59.0",
+    "pyarrow>=24.0.0",
+    "pytz>=2026.2",
+    "requests>=2.33.1",
+    "rich>=15.0.0",
+]
