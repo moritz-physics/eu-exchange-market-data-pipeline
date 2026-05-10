@@ -1,66 +1,72 @@
-# german_scraper/exchanges/bme.py
-#download all post-trade data from BME (Bolsas y Mercados Españoles) from today and yesterday
+"""BME (Bolsas y Mercados Españoles) post-trade JSON scraper."""
+from __future__ import annotations
 
-import re
 import asyncio
-from .base import Exchange
-from german_scraper.core.throttle import random_delay
+import re
+from typing import Optional
 
-BME_URL = "https://www.bolsasymercados.es/bme-exchange/en/post-trade-data"
+from playwright.async_api import Page
+
+from .base import Exchange
+
+BME_URL: str = "https://www.bolsasymercados.es/bme-exchange/en/post-trade-data"
+
 
 class BME(Exchange):
-    name = "BME (Spain) Post-Trade"
+    """BME (Spain) MiFID II post-trade JSON scraper."""
 
-    async def accept_cookies_and_ok(self, page):
-        # Accept All Cookies (by id)
+    name: str = "BME (Spain) Post-Trade"
+
+    async def _accept_cookies_and_ok(self, page: Page) -> None:
+        """Dismiss the OneTrust banner and the secondary modal."""
         try:
             accept_btn = page.locator("#onetrust-accept-btn-handler")
-            await accept_btn.wait_for(state="visible", timeout=15000)
+            await accept_btn.wait_for(state="visible", timeout=15_000)
             await accept_btn.click()
-            print("🍪 Clicked Accept All Cookies (by id)")
+            self.logger.info("Clicked Accept All Cookies")
             await asyncio.sleep(3)
-        except Exception as e:
-            print(f"⚠️  Failed to click Accept All Cookies: {e}")
+        except Exception as exc:
+            self.logger.warning("Failed to click Accept All Cookies: %s", exc)
 
-        # Second pop-up: Ok (by class and data-dismiss attr)
         try:
             ok_btn = page.locator("button.btn.btn-default[data-dismiss='modal']")
-            await ok_btn.wait_for(state="visible", timeout=15000)
+            await ok_btn.wait_for(state="visible", timeout=15_000)
             await ok_btn.click()
-            print("✅ Clicked Ok on second pop-up (by class)")
+            self.logger.info("Clicked OK on second pop-up")
             await asyncio.sleep(3)
-        except Exception as e:
-            print(f"⚠️  Failed to click Ok button: {e}")
+        except Exception as exc:
+            self.logger.warning("Failed to click OK button: %s", exc)
 
-    async def run(self):
+    async def run(self) -> None:
+        """Download every BMEA post-trade JSON anchor on the page."""
         page = await self.browser.new_page()
-        await page.goto(BME_URL)
-        await self.accept_cookies_and_ok(page)
+        try:
+            await page.goto(BME_URL)
+            await self._accept_cookies_and_ok(page)
 
-        # Find all links ending in _BMEA_posttrade.json (like codegen)
-        links = await page.locator("a").filter(has_text=re.compile(r"_BMEA_posttrade\.json$", re.I)).all()
-        print(f"🗂 Found {len(links)} post-trade JSON links")
+            links = await page.locator("a").filter(
+                has_text=re.compile(r"_BMEA_posttrade\.json$", re.I)
+            ).all()
+            self.logger.info("BME: %d post-trade JSON links", len(links))
 
-        for idx, link in enumerate(links, 1):
-            label = (await link.text_content()).strip()
-            filename = label  # Use the link text as the file name
-
-            print(f"  [{idx}/{len(links)}] {filename}")
-
-            if self.debug:
-                print(f"   (DEBUG) Would download {filename}")
-                await random_delay(0.5, 1.5)
-                continue
-
-            if self.pipeline.has_seen(filename):
-                print(f"   (SKIP) Already downloaded: {filename}")
-                continue
-
-            # Option/Alt-click for download
-            async with page.expect_download() as dl_info:
-                await link.click(modifiers=["Alt"])
-            download = await dl_info.value
-            await self.pipeline.save(download, "bme/post-trade")
-            await random_delay(0.8, 2.0)
-
-        await page.close()
+            for link in links:
+                text: Optional[str] = await link.text_content()
+                filename = (text or "").strip()
+                if not filename:
+                    continue
+                if self.debug:
+                    self.logger.info("(DEBUG) Would download %s", filename)
+                    continue
+                if self.pipeline.has_seen(filename):
+                    self.logger.info("(SKIP) Already downloaded: %s", filename)
+                    continue
+                try:
+                    self.logger.info("Downloading %s", filename)
+                    async with page.expect_download() as dl_info:
+                        await link.click(modifiers=["Alt"])
+                    download = await dl_info.value
+                    await self.pipeline.save(download, "bme/post-trade")
+                except Exception as exc:
+                    self.logger.error("Failed to download %s: %s", filename, exc)
+        finally:
+            await page.close()

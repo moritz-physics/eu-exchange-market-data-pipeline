@@ -1,77 +1,74 @@
-# german_scraper/exchanges/cboe.py
+"""Cboe Europe equities trade-data scraper.
 
-import re
+Downloads the per-market hourly RTS-13 public trade data CSVs across the
+four Cboe markets: BXE, CXE, DXE, APA.
+"""
+from __future__ import annotations
+
 import asyncio
-from .base import Exchange
-from german_scraper.core.throttle import random_delay
+import re
+from typing import Optional
 
-CBOE_URL = "https://www.cboe.com/europe/equities/trade_data/"
-MARKETS = ["bxe", "cxe", "dxe", "apa"]
+from playwright.async_api import Page
+
+from .base import Exchange
+
+CBOE_URL: str = "https://www.cboe.com/europe/equities/trade_data/"
+MARKETS: tuple[str, ...] = ("bxe", "cxe", "dxe", "apa")
+
 
 class Cboe(Exchange):
-    name = "Cboe Europe"
+    """Cboe Europe hourly trade-data CSV scraper."""
 
-    async def dismiss_cookie_banner(self, page, timeout=5):
-        """
-        Wait up to `timeout` seconds for the "Accept All" cookie button to appear, then click it.
-        """
-        try:
-            await asyncio.sleep(2)  # Give the banner a moment to pop up
-            for _ in range(timeout * 2):  # Check every 0.5s up to `timeout`
+    name: str = "Cboe Europe"
+
+    async def _dismiss_cookie_banner(self, page: Page, timeout_s: int = 5) -> None:
+        """Wait briefly for the OneTrust 'Accept All' button and click it."""
+        await asyncio.sleep(2)
+        for _ in range(timeout_s * 2):
+            try:
                 btn = page.get_by_role("button", name=re.compile(r"Accept All", re.I))
                 if await btn.is_visible():
-                    print("🍪 Accepting cookies via 'Accept All' button")
+                    self.logger.info("Accepting cookies")
                     await btn.click()
                     await page.wait_for_timeout(400)
                     return
-                await asyncio.sleep(0.5)
-            print("⚠️  Cookie banner not found within timeout")
-        except Exception as e:
-            print(f"⚠️  Failed to dismiss cookie banner: {e}")
+            except Exception:
+                pass
+            await asyncio.sleep(0.5)
+        self.logger.debug("Cboe cookie banner not present")
 
-    async def run(self):
+    async def run(self) -> None:
+        """Download every hourly CSV across the four Cboe markets."""
         page = await self.browser.new_page()
-        await page.goto(CBOE_URL)
+        try:
+            await page.goto(CBOE_URL)
+            await self._dismiss_cookie_banner(page)
+            self.logger.info("Looking for hourly CSV files on Cboe Europe")
 
-        await self.dismiss_cookie_banner(page)  # Handle the cookie banner
+            total_found = 0
+            for market in MARKETS:
+                csv_links = await page.locator("a[href$='.csv']").all()
+                pattern = re.compile(
+                    rf"rts13_public_trade_data_{market}_\d{{4}}-\d{{2}}-\d{{2}}_\d{{2}}\.csv$",
+                    re.I,
+                )
+                market_csvs: list[tuple[object, str]] = []
+                for link in csv_links:
+                    href: Optional[str] = await link.get_attribute("href")
+                    if href and pattern.search(href):
+                        market_csvs.append((link, href))
 
-        print("🔍 Looking for all hourly .csv files on Cboe Europe page...")
+                self.logger.info("%s hourly files: %d", market.upper(), len(market_csvs))
+                total_found += len(market_csvs)
 
-        total_found = 0
-        for market in MARKETS:
-            # Section titles are like: "B XE - HOURLY FILES"
-            section_heading = f"{market.upper()} - HOURLY FILES"
-            # Find all .csv links for this market and hourly pattern
-            csv_links = await page.locator(f"a[href$='.csv']").all()
-            # Only links matching pattern: rts13_public_trade_data_{market}_YYYY-MM-DD_HH.csv
-            market_csvs = []
-            pattern = re.compile(rf"rts13_public_trade_data_{market}_\d{{4}}-\d{{2}}-\d{{2}}_\d{{2}}\.csv$", re.I)
-            for link in csv_links:
-                href = await link.get_attribute("href")
-                if href and pattern.search(href):
-                    market_csvs.append((link, href))
+                for link, href in market_csvs:
+                    filename = href.split("/")[-1]
+                    await self._download_via_click(
+                        page, link, f"cboe/{market}/hourly", filename,  # type: ignore[arg-type]
+                        post_delay=(0.5, 2.5),
+                    )
 
-            print(f"🗂 {market.upper()} hourly files: {len(market_csvs)} found")
-            total_found += len(market_csvs)
-
-            for idx, (link, href) in enumerate(market_csvs, 1):
-                filename = href.split("/")[-1]
-                print(f"  [{idx}/{len(market_csvs)}] {filename}")
-
-                if self.debug:
-                    print(f"   (DEBUG) Would download {filename}")
-                    await random_delay(0.3, 1.2)
-                    continue
-                if self.pipeline.has_seen(filename):
-                    print(f"   (SKIP) Already downloaded: {filename}")
-                    continue
-
-                # Download with Playwright for simplicity and consistency
-                async with page.expect_download() as dl_info:
-                    await link.click()
-                download = await dl_info.value
-                await self.pipeline.save(download, f"cboe/{market}/hourly")
-                await random_delay(0.5, 2.5)
-
-        print(f"✅ Done. Total hourly files found: {total_found}")
-        await page.close()
+            self.logger.info("Cboe done — total hourly files found: %d", total_found)
+        finally:
+            await page.close()

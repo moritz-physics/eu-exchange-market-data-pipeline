@@ -1,114 +1,114 @@
-# german_scraper/exchanges/ice.py
-"""
-ICE delayed trade data scraper.
-- Handles login and downloads every file on every result page.
-- Prompts user for 2FA code at runtime.
-- Dedupes via manifest/pipeline, fits modular workflow.
-"""
+"""ICE delayed pre-trade scraper.
 
-import asyncio, random, re
-from playwright.async_api import TimeoutError
+Reads credentials from the environment (``ICE_EMAIL``, ``ICE_PASSWORD``);
+prompts interactively for the 2FA code on each run.
+"""
+from __future__ import annotations
+
+import asyncio
+import os
+import random
+import re
+
+from playwright.async_api import Page, TimeoutError
+
 from .base import Exchange
 from german_scraper.core.throttle import random_delay
 
-ICE_EMAIL    = "heidtmann.moritz@gmail.com"     # your ICE email needs to be here dont spam me 
-# Note: This email is used for login, and notifications.
-ICE_PASSWORD = "Finance2024"
-# 2FA code will be prompted from user on each run
+PAGE_LOAD_WAIT: tuple[float, float] = (2.0, 4.0)
+ICE_REPORT_URL: str = "https://www.ice.com/report/60"
 
-PAGE_LOAD_WAIT = (2, 4)   # seconds between result pages
 
 class ICE(Exchange):
-    name = "ICE Exchange"
+    """ICE Exchange pre-trade scraper (paginated download buttons)."""
 
-    async def _human_wait(self, a: float, b: float):
-        """Sleep between a…b seconds (float)."""
+    name: str = "ICE Exchange"
+
+    @staticmethod
+    def _credentials() -> tuple[str, str]:
+        """Pull ICE_EMAIL/ICE_PASSWORD from env; fail loudly if missing."""
+        email = os.environ.get("ICE_EMAIL")
+        password = os.environ.get("ICE_PASSWORD")
+        if not email or not password:
+            raise RuntimeError(
+                "ICE_EMAIL and ICE_PASSWORD environment variables must be set."
+            )
+        return email, password
+
+    async def _human_wait(self, a: float, b: float) -> None:
         await asyncio.sleep(random.uniform(a, b))
 
-    async def _accept_cookies(self, page):
+    async def _accept_cookies(self, page: Page) -> None:
         await self._human_wait(1, 2)
         try:
-            await page.get_by_role("button", name=re.compile("Accept All Cookies", re.I)).click()
+            await page.get_by_role(
+                "button", name=re.compile("Accept All Cookies", re.I)
+            ).click()
             await self._human_wait(0.5, 1)
             await page.get_by_role("button", name=re.compile(r"I Accept", re.I)).click()
         except TimeoutError:
-            print("⚠️  Cookie banner not present or already dismissed.")
+            self.logger.debug("ICE cookie banner not present")
 
-    async def _login(self, page):
-        """Automates ICE login; prompts user for 2FA code."""
-        await page.goto("https://www.ice.com/report/60")
+    async def _login(self, page: Page) -> None:
+        """Fill in credentials and prompt the user for a 2FA code."""
+        email, password = self._credentials()
+        await page.goto(ICE_REPORT_URL)
         await self._accept_cookies(page)
-        await page.get_by_role("link", name=re.compile("click here to login", re.I)).click()
-        await page.get_by_role("textbox", name=re.compile("Email", re.I)).fill(ICE_EMAIL)
-        await page.get_by_role("checkbox", name=re.compile("Remember User ID", re.I)).check()
+        await page.get_by_role(
+            "link", name=re.compile("click here to login", re.I)
+        ).click()
+        await page.get_by_role("textbox", name=re.compile("Email", re.I)).fill(email)
+        await page.get_by_role(
+            "checkbox", name=re.compile("Remember User ID", re.I)
+        ).check()
         await page.get_by_role("button", name=re.compile("^Next$", re.I)).click()
-        await page.get_by_role("textbox", name=re.compile("Password", re.I)).fill(ICE_PASSWORD)
+        await page.get_by_role("textbox", name=re.compile("Password", re.I)).fill(password)
         await page.get_by_role("button", name=re.compile("^Login$", re.I)).click()
 
-        # PROMPT USER for 2FA code from SMS/app/email
-        twofa = input("\n🔐 Please enter your ICE 2FA code: ")
-        await page.get_by_role("textbox", name=re.compile("2FA Passcode", re.I)).fill(twofa)
+        twofa = input("\nPlease enter your ICE 2FA code: ")
+        await page.get_by_role(
+            "textbox", name=re.compile("2FA Passcode", re.I)
+        ).fill(twofa)
         await page.get_by_role("button", name=re.compile("^Login$", re.I)).click()
+        self.logger.info("Logged in to ICE")
 
-        print("✅ Logged in to ICE")
-
-    async def _download_buttons_on_page(self, page, page_idx: int):
-        """
-        Click every button in the results table that triggers a file download.
-        Returns number of new files downloaded on this page.
-        """
-        rows = page.locator("tr")          # table rows
-        buttons = rows.locator("button")   # download buttons inside rows
+    async def _download_buttons_on_page(self, page: Page, page_idx: int) -> int:
+        """Click every download button in the results table on the current page."""
+        rows = page.locator("tr")
+        buttons = rows.locator("button")
         n = await buttons.count()
         new_files = 0
-
         for i in range(n):
             btn = buttons.nth(i)
-            row_text = (await btn.locator("xpath=..").text_content()) or f"row{i}"
+            row_text = await btn.locator("xpath=..").text_content() or f"row{i}"
             label = f"ICE page {page_idx}: {row_text.strip()}"
-
-            if self.debug:
-                print(f"(DEBUG) Would download: {label}")
-                continue
-            if self.pipeline.has_seen(label):
-                print(f"(SKIP) Already downloaded: {label}")
-                continue
-
-            try:
-                async with page.expect_download() as dl_info:
-                    await btn.click()
-                download = await dl_info.value
-                await self.pipeline.save(download, "ice")
+            saved = await self._download_via_click(
+                page, btn, "ice", label, post_delay=(0.3, 0.7),
+            )
+            if saved:
                 new_files += 1
-                await random_delay(0.3, 0.7)   # quick delay, many files per page
-            except Exception as e:
-                print(f"❌ Failed to download {label}: {e}")
-
         return new_files
 
-    async def run(self):
+    async def run(self) -> None:
+        """Log in, then iterate every result page until 'Next' is disabled."""
         page = await self.browser.new_page()
-        await self._login(page)
-
-        page_idx = 1
-        total_new = 0
-
-        while True:
-            await self._human_wait(*PAGE_LOAD_WAIT)
-            new_this_page = await self._download_buttons_on_page(page, page_idx)
-            total_new += new_this_page
-
-            # Try to click “Next ›” link; if disabled/absent, break
-            try:
-                next_link = page.get_by_role("link", name=re.compile(r"Next", re.I))
-                if not await next_link.is_enabled():
-                    print("➡️  ‘Next’ link disabled – reached last page.")
+        try:
+            await self._login(page)
+            page_idx = 1
+            total_new = 0
+            while True:
+                await self._human_wait(*PAGE_LOAD_WAIT)
+                total_new += await self._download_buttons_on_page(page, page_idx)
+                try:
+                    next_link = page.get_by_role("link", name=re.compile(r"Next", re.I))
+                    if not await next_link.is_enabled():
+                        self.logger.info("'Next' link disabled — last page")
+                        break
+                    await next_link.click()
+                    page_idx += 1
+                except TimeoutError:
+                    self.logger.info("No 'Next' link found — last page")
                     break
-                await next_link.click()
-                page_idx += 1
-            except TimeoutError:
-                print("➡️  No ‘Next’ link found – reached last page.")
-                break
-
-        print(f"✅ ICE finished – new files this run: {total_new}")
-        await page.close()
+            self.logger.info("ICE finished — new files this run: %d", total_new)
+        finally:
+            await page.close()

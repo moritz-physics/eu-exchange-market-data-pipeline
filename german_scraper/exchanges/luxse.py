@@ -1,35 +1,56 @@
-# german_scraper/exchanges/luxse.py
-"""
-Luxembourg Stock Exchange (LuxSE) – Pre & Post trade request + email download.
+"""Luxembourg Stock Exchange (LuxSE) – pre & post-trade request scraper.
 
-This variant uses IN-CODE settings (no environment variables).
-Edit the CONFIG section below with your details.
-"""
+LuxSE delivers data via emailed download links: the scraper fills the
+on-site request form, then polls IMAP for the resulting email and
+downloads the file. All credentials come from the environment.
 
-import time, re
-from playwright.async_api import TimeoutError
+Required env vars:
+    LUXSE_FIRST_NAME, LUXSE_LAST_NAME, LUXSE_RECIPIENT_EMAIL,
+    IMAP_HOST, IMAP_USER, IMAP_PASS
+"""
+from __future__ import annotations
+
+import os
+import re
+import time
+
+from playwright.async_api import Page, TimeoutError
+
 from .base import Exchange
-from german_scraper.core.throttle import random_delay
 from german_scraper.core.email_inbox import wait_for_link
+from german_scraper.core.throttle import random_delay
 
-# ── CONFIG: edit these ────────────────────────────────────────────────────────
-FIRST_NAME       = "Moritz"
-LAST_NAME        = "Heidtmann"
-RECIPIENT_EMAIL  = "heidtmann.moritz@gmail.com"       # where LuxSE sends the links
-SENDER_EMAIL     = "marketdataservices@bourse.lu"     # LuxSE sender to match
+LUXSE_URL: str = (
+    "https://www.luxse.com/market-overview/trading-data/pre-and-post-trade-data"
+)
+SENDER_EMAIL: str = os.environ.get(
+    "LUXSE_SENDER_EMAIL", "marketdataservices@bourse.lu"
+)
 
-IMAP_HOST        = "imap.gmail.com"                   # your IMAP host
-IMAP_USER        = "yourgmail@gmail.com"              # your IMAP username (full email)
-IMAP_PASS        = "your_app_password_here"           # IMAP/app password (NOT your login pw)
-# ──────────────────────────────────────────────────────────────────────────────
-
-LUXSE_URL = "https://www.luxse.com/market-overview/trading-data/pre-and-post-trade-data"
 
 class LuxSE(Exchange):
-    name = "Luxembourg Stock Exchange (LuxSE)"
+    """LuxSE pre & post-trade request scraper."""
 
-    async def _accept_cookies(self, page):
-        # OneTrust-style button
+    name: str = "Luxembourg Stock Exchange (LuxSE)"
+
+    def _config(self) -> dict[str, str]:
+        """Return required form fields and IMAP creds; raise if missing."""
+        env = {
+            "first_name": os.environ.get("LUXSE_FIRST_NAME"),
+            "last_name": os.environ.get("LUXSE_LAST_NAME"),
+            "recipient": os.environ.get("LUXSE_RECIPIENT_EMAIL"),
+            "imap_host": os.environ.get("IMAP_HOST", "imap.gmail.com"),
+            "imap_user": os.environ.get("IMAP_USER"),
+            "imap_pass": os.environ.get("IMAP_PASS"),
+        }
+        missing = [k for k, v in env.items() if not v]
+        if missing:
+            raise RuntimeError(
+                f"LuxSE requires environment variables for: {', '.join(missing)}"
+            )
+        return env  # type: ignore[return-value]
+
+    async def _accept_cookies(self, page: Page) -> None:
         try:
             btn = page.get_by_role("button", name=re.compile(r"Allow all", re.I))
             if await btn.is_visible():
@@ -37,19 +58,22 @@ class LuxSE(Exchange):
         except Exception:
             pass
 
-    async def _fill_form_and_submit(self, page, section_label: str):
-        """
-        section_label: r"^Pre-trade data$" or r"^Post-trade data$"
-        """
-        # open the accordion/tab
+    async def _fill_form_and_submit(
+        self, page: Page, section_label: str, cfg: dict[str, str]
+    ) -> None:
+        """Open the matching accordion and submit the request form."""
         await page.locator("div").filter(has_text=re.compile(section_label)).first.click()
 
-        # Fill required fields
-        await page.locator("div", has_text=re.compile(r"^Name \*$")).get_by_role("textbox").fill(FIRST_NAME)
-        await page.locator("div", has_text=re.compile(r"^Last name \*$")).get_by_role("textbox").fill(LAST_NAME)
-        await page.locator("div", has_text=re.compile(r"^E-mail \*$")).get_by_role("textbox").fill(RECIPIENT_EMAIL)
+        await page.locator("div", has_text=re.compile(r"^Name \*$")).get_by_role(
+            "textbox"
+        ).fill(cfg["first_name"])
+        await page.locator("div", has_text=re.compile(r"^Last name \*$")).get_by_role(
+            "textbox"
+        ).fill(cfg["last_name"])
+        await page.locator("div", has_text=re.compile(r"^E-mail \*$")).get_by_role(
+            "textbox"
+        ).fill(cfg["recipient"])
 
-        # Consent checkbox or its label
         try:
             cb = page.get_by_role("checkbox")
             if await cb.count() > 0:
@@ -58,44 +82,45 @@ class LuxSE(Exchange):
                 await page.get_by_role("paragraph").filter(
                     has_text=re.compile(r"By completing this form", re.I)
                 ).locator("svg").click()
-        except Exception:
-            pass
+        except Exception as exc:
+            self.logger.warning("Could not toggle consent checkbox: %s", exc)
 
-        # Submit
-        await page.get_by_role("button", name=re.compile(r"Send your request", re.I)).click()
+        await page.get_by_role(
+            "button", name=re.compile(r"Send your request", re.I)
+        ).click()
 
-    async def _wait_email_and_download(self, page, subdir: str, since_epoch: float):
-        if not (IMAP_USER and IMAP_PASS):
-            raise RuntimeError(
-                "IMAP_USER/IMAP_PASS not set in luxse.py CONFIG section."
-            )
-
-        print(f"📬 Waiting for LuxSE email → {RECIPIENT_EMAIL} from {SENDER_EMAIL} …")
+    async def _wait_email_and_download(
+        self, page: Page, subdir: str, since_epoch: float, cfg: dict[str, str]
+    ) -> None:
+        """Block on IMAP for the LuxSE link, then trigger a Playwright download."""
+        self.logger.info(
+            "Waiting for LuxSE email to %s from %s", cfg["recipient"], SENDER_EMAIL,
+        )
         url = await wait_for_link(
-            imap_host=IMAP_HOST,
-            imap_user=IMAP_USER,
-            imap_pass=IMAP_PASS,
+            imap_host=cfg["imap_host"],
+            imap_user=cfg["imap_user"],
+            imap_pass=cfg["imap_pass"],
             from_filter=SENDER_EMAIL,
-            to_filter=RECIPIENT_EMAIL,
+            to_filter=cfg["recipient"],
             since_epoch=since_epoch,
             timeout=300,
             poll_interval=10,
         )
         if not url:
-            raise TimeoutError("Timed out waiting for LuxSE email with download link")
-        print(f"🔗 Got download link: {url}")
+            raise TimeoutError("Timed out waiting for LuxSE email")
+        self.logger.info("Got download link: %s", url)
 
         label = f"LuxSE {subdir}: {url}"
         if self.debug:
-            print(f"(DEBUG) Would download: {label}")
+            self.logger.info("(DEBUG) Would download: %s", label)
             return
         if self.pipeline.has_seen(label):
-            print(f"(SKIP) Already downloaded: {label}")
+            self.logger.info("(SKIP) Already downloaded: %s", label)
             return
 
-        # Trigger a download event via a temporary anchor (so pipeline .save() works)
         async with page.expect_download() as dl_info:
-            await page.evaluate("""
+            await page.evaluate(
+                """
                 (href) => {
                     const a = document.createElement('a');
                     a.href = href;
@@ -104,25 +129,29 @@ class LuxSE(Exchange):
                     a.click();
                     a.remove();
                 }
-            """, url)
+                """,
+                url,
+            )
         download = await dl_info.value
         await self.pipeline.save(download, f"luxse/{subdir}")
+        self.pipeline.mark_seen(label)
 
-    async def run(self):
+    async def run(self) -> None:
+        """Submit pre-trade then post-trade requests and download both files."""
+        cfg = self._config()
         page = await self.browser.new_page()
-        await page.goto(LUXSE_URL)
-        await self._accept_cookies(page)
+        try:
+            await page.goto(LUXSE_URL)
+            await self._accept_cookies(page)
 
-        # PRE-TRADE
-        pre_since = time.time()
-        await self._fill_form_and_submit(page, r"^Pre-trade data$")
-        await random_delay(1.0, 2.0)
-        await self._wait_email_and_download(page, "pre", pre_since)
+            pre_since = time.time()
+            await self._fill_form_and_submit(page, r"^Pre-trade data$", cfg)
+            await random_delay(1.0, 2.0)
+            await self._wait_email_and_download(page, "pre", pre_since, cfg)
 
-        # POST-TRADE
-        post_since = time.time()
-        await self._fill_form_and_submit(page, r"^Post-trade data$")
-        await random_delay(1.0, 2.0)
-        await self._wait_email_and_download(page, "post", post_since)
-
-        await page.close()
+            post_since = time.time()
+            await self._fill_form_and_submit(page, r"^Post-trade data$", cfg)
+            await random_delay(1.0, 2.0)
+            await self._wait_email_and_download(page, "post", post_since, cfg)
+        finally:
+            await page.close()

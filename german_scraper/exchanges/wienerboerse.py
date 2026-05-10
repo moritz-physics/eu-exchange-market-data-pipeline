@@ -1,77 +1,83 @@
-import random, asyncio
-from playwright.async_api import TimeoutError
+"""Wiener Börse pre-trade ZIP scraper.
+
+The Wiener Börse prices page exposes its download via a global JS
+``onClick()`` function rather than an anchor href, so we wait for the
+function to be defined and invoke it directly.
+"""
+from __future__ import annotations
+
+import asyncio
+import random
+
+from playwright.async_api import Page, TimeoutError
+
 from .base import Exchange
 from german_scraper.core.throttle import random_delay
 
-URLS = [
+URLS: list[tuple[str, str]] = [
     ("Prices Tab 2", "https://prices.wienerborse.at/#tab-content2"),
     ("Prices Tab 3", "https://prices.wienerborse.at/#tab-content3"),
     ("Prices Tab 4", "https://prices.wienerborse.at/#tab-content4"),
 ]
 
-MAX_RELOADS_PER_TAB = 1            # at most one reload if JS didn’t appear
-ONCLICK_WAIT_MS      = 15_000      # how long to wait for the onClick() fn
+MAX_RELOADS_PER_TAB: int = 1
+ONCLICK_WAIT_MS: int = 15_000
+
 
 class WienerBoerse(Exchange):
-    name = "Wiener Börse"
+    """Wiener Börse pre-trade ZIP downloader (no stealth)."""
 
-    async def _trigger_download_via_js(self, page) -> str | None:
-        """
-        If the page defines a global onClick() that triggers the ZIP download,
-        call it via JS and return the file-name hint (link text) if possible.
-        Returns None if onClick not found.
-        """
+    name: str = "Wiener Börse"
+
+    async def _trigger_download_via_js(self, page: Page):
+        """Invoke the page's ``onClick()`` function and capture the download."""
         try:
-            # wait until the function exists in the page context
-            await page.wait_for_function("typeof onClick === 'function'",
-                                         timeout=ONCLICK_WAIT_MS)
+            await page.wait_for_function(
+                "typeof onClick === 'function'", timeout=ONCLICK_WAIT_MS,
+            )
         except TimeoutError:
             return None
-
-        # call the JS function that would be invoked by the button
         async with page.expect_download() as dl_info:
             await page.evaluate("onClick()")
-        download = await dl_info.value
-        return download
+        return await dl_info.value
 
-    async def run(self):
+    async def run(self) -> None:
+        """Iterate the three configured price tabs and trigger each download."""
         page = await self.browser.new_page()
+        try:
+            for tab_name, url in URLS:
+                self.logger.info("Navigating to %s (%s)", url, tab_name)
+                reloads_left = MAX_RELOADS_PER_TAB
 
-        for tab_name, url in URLS:
-            print(f"\n🔗 Navigating to {url} ({tab_name})")
-            reloads_left = MAX_RELOADS_PER_TAB
+                while True:
+                    await page.goto(url)
+                    wait_time = random.uniform(5, 8)
+                    self.logger.info("Waiting %.1fs for JS to load", wait_time)
+                    await asyncio.sleep(wait_time)
 
-            while True:
-                await page.goto(url)
-                wait_time = random.uniform(5, 8)
-                print(f"⏳ Waiting {wait_time:.1f}s for JS to load…")
-                await asyncio.sleep(wait_time)
+                    download = await self._trigger_download_via_js(page)
+                    if download:
+                        filename = download.suggested_filename
+                        label = f"{tab_name}: {filename}"
+                        if self.debug:
+                            self.logger.info("(DEBUG) Would download %s", label)
+                        elif self.pipeline.has_seen(label):
+                            self.logger.info("(SKIP) Already have %s", label)
+                        else:
+                            self.logger.info("Saving %s", label)
+                            await self.pipeline.save(download, "wienerboerse")
+                        await random_delay(2, 4)
+                        break
 
-                # try to trigger the download via JS
-                download = await self._trigger_download_via_js(page)
-                if download:
-                    filename = download.suggested_filename
-                    label    = f"{tab_name}: {filename}"
-
-                    if self.debug:
-                        print(f"(DEBUG) Would download {label}")
-                    elif self.pipeline.has_seen(label):
-                        print(f"(SKIP) Already have {label}")
-                    else:
-                        print(f"⬇️  Saving {label}")
-                        await self.pipeline.save(download, "wienerboerse")
-                    await random_delay(2, 4)
-                    break  # success, go to next tab
-
-                # JS not ready → optionally reload once
-                if reloads_left:
-                    reloads_left -= 1
-                    extra_wait = random.uniform(5, 7)
-                    print(f"🔄 Reloading once (JS not ready). Waiting {extra_wait:.1f}s…")
-                    await asyncio.sleep(extra_wait)
-                    continue
-                else:
-                    print(f"⚠️  Gave up on {tab_name} – onClick() never appeared.")
+                    if reloads_left:
+                        reloads_left -= 1
+                        extra_wait = random.uniform(5, 7)
+                        self.logger.warning(
+                            "Reloading once (JS not ready). Waiting %.1fs", extra_wait,
+                        )
+                        await asyncio.sleep(extra_wait)
+                        continue
+                    self.logger.error("Gave up on %s — onClick() never appeared", tab_name)
                     break
-
-        await page.close()
+        finally:
+            await page.close()

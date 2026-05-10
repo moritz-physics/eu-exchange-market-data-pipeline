@@ -1,53 +1,39 @@
-# german_scraper/exchanges/bank_of_greece.py
+"""Bank of Greece HDAT pre & post-trade JSON scraper."""
+from __future__ import annotations
 
-import re
 from .base import Exchange
-from german_scraper.core.throttle import random_delay
 
-PRE_URL = 'https://www.bankofgreece.gr/en/main-tasks/markets/hdat/pre-trade-data#:~:text=HDAT%20makes%20pre,600%2F2014%20%28MIFIR'
+PRE_URL: str = (
+    "https://www.bankofgreece.gr/en/main-tasks/markets/hdat/pre-trade-data"
+    "#:~:text=HDAT%20makes%20pre,600%2F2014%20%28MIFIR"
+)
+
 
 class BankOfGreece(Exchange):
-    name = "Bank of Greece"
+    """Bank of Greece HDAT (Hellenic Debt securities Automated Trading) feed."""
 
-    async def run(self):
+    name: str = "Bank of Greece"
+
+    async def run(self) -> None:
+        """Download both PreTradeHDAT.json and PostTradeHDAT.json."""
         page = await self.browser.new_page()
+        try:
+            await page.goto(PRE_URL)
 
-        # 1️⃣ Go to pre-trade page
-        await page.goto(PRE_URL)
+            pre_link = page.get_by_role("link", name="PreTradeHDAT.json i")
+            await self._download_via_click(
+                page, pre_link, "bank-of-greece/Pre-Trade",
+                "PreTradeHDAT.json", post_delay=(1.0, 2.0),
+            )
 
-        # 2️⃣ Download PreTradeHDAT.json i
-        pre_link = page.get_by_role('link', name="PreTradeHDAT.json i")
-        pre_file = "PreTradeHDAT.json"
-        if self.debug:
-            print(f"(DEBUG) Would click PreTrade link")
-            await random_delay(1, 2)
-        elif self.pipeline.has_seen(pre_file):
-            print(f"(SKIP) Already downloaded: {pre_file}")
-        else:
-            async with page.expect_download() as dl_info:
-                await pre_link.click()
-            download = await dl_info.value
-            await self.pipeline.save(download, "bank-of-greece/Pre-Trade")
-            await random_delay(1, 2)
+            await page.get_by_role("link", name="Electronic Secondary").click()
+            await page.get_by_role("link", name="Post-trade data").click()
 
-        # 3️⃣ Navigate to post-trade page
-        await page.get_by_role('link', name="Electronic Secondary").click()
-        await page.get_by_role('link', name="Post-trade data").click()
-
-        # 4️⃣ Download PostTradeHDAT.json i
-        post_link = page.get_by_role('link', name="PostTradeHDAT.json i")
-        post_file = "PostTradeHDAT.json"
-        if self.debug:
-            print(f"(DEBUG) Would click PostTrade link")
-            await random_delay(1, 2)
-        elif self.pipeline.has_seen(post_file):
-            print(f"(SKIP) Already downloaded: {post_file}")
-        else:
-            async with page.expect_download() as dl_info:
-                await post_link.click()
-            download = await dl_info.value
-            await self.pipeline.save(download, "bank-of-greece/Post-Trade")
-            await random_delay(1, 2)
-
-        print("✅ done")
-        await page.close()
+            post_link = page.get_by_role("link", name="PostTradeHDAT.json i")
+            await self._download_via_click(
+                page, post_link, "bank-of-greece/Post-Trade",
+                "PostTradeHDAT.json", post_delay=(1.0, 2.0),
+            )
+            self.logger.info("Bank of Greece done")
+        finally:
+            await page.close()

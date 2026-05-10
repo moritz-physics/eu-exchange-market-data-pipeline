@@ -1,142 +1,107 @@
-# german_scraper/exchanges/bratislava.py
-"""
-Bratislava Stock Exchange (BSSE) – request form → email → save all attachments.
+"""Bratislava Stock Exchange (BSSE) – request form → email → save attachments.
 
-Flow:
-1) Open request page
-2) Click "New request"
-3) Fill required fields (first name, last name, email, date, consent)
-4) Submit
-5) Poll IMAP for an email from sys@bsse.sk and save every attachment.
+Submits the BSSE request form, then polls IMAP for an email from
+``sys@bsse.sk`` and saves every attachment to the local pipeline.
 
-Fits your pipeline:
-- Uses self.pipeline.has_seen / remember-like logic via label dedupe
-- Writes files into downloads/bratislava/
+Required env vars:
+    BSSE_FIRST_NAME, BSSE_LAST_NAME, BSSE_RECIPIENT_EMAIL,
+    IMAP_HOST, IMAP_USER, IMAP_PASS
 """
+from __future__ import annotations
 
 import os
 import time
-import asyncio
-from pathlib import Path
 from datetime import datetime, timezone
-from playwright.async_api import TimeoutError
+
+from playwright.async_api import Page, TimeoutError
 
 from .base import Exchange
-from german_scraper.core.throttle import random_delay
 from german_scraper.core.email_inbox import wait_for_attachments
+from german_scraper.core.throttle import random_delay
 
-# ── CONFIG: edit these in code ────────────────────────────────────────────────
-FIRST_NAME       = "Moritz"
-LAST_NAME        = "Heidtmann"
-RECIPIENT_EMAIL  = "heidtmann.moritz@gmail.com"
-SENDER_EMAIL     = "sys@bsse.sk"
+REQUEST_URL: str = "https://www.bsse.sk/bcpb/en/sending-pre-trade-and-post-trade-data/"
+DOWNLOAD_SUBDIR: str = "bratislava"
+SENDER_EMAIL: str = os.environ.get("BSSE_SENDER_EMAIL", "sys@bsse.sk")
 
-IMAP_HOST        = "imap.gmail.com"
-IMAP_USER        = "yourgmail@gmail.com"
-IMAP_PASS        = "your_app_password_here"
-
-REQUEST_URL      = "https://www.bsse.sk/bcpb/en/sending-pre-trade-and-post-trade-data/"
-DOWNLOAD_SUBDIR  = "bratislava"   # under downloads/
-# ──────────────────────────────────────────────────────────────────────────────
 
 def _today_str_for_bsse() -> str:
-    """
-    BSSE date input accepts yyyy/mm/dd cleanly (as your recording showed).
-    Adjust if you find they changed the format.
-    """
+    """BSSE's date input expects ``yyyy/mm/dd``."""
     return datetime.now(timezone.utc).strftime("%Y/%m/%d")
 
-class Bratislava(Exchange):
-    name = "Bratislava Stock Exchange (BSSE)"
 
-    async def _open_form(self, page):
-        # Navigate and click "New request"
+class Bratislava(Exchange):
+    """Bratislava Stock Exchange (BSSE) request-and-email scraper."""
+
+    name: str = "Bratislava Stock Exchange (BSSE)"
+
+    def _config(self) -> dict[str, str]:
+        env = {
+            "first_name": os.environ.get("BSSE_FIRST_NAME"),
+            "last_name": os.environ.get("BSSE_LAST_NAME"),
+            "recipient": os.environ.get("BSSE_RECIPIENT_EMAIL"),
+            "imap_host": os.environ.get("IMAP_HOST", "imap.gmail.com"),
+            "imap_user": os.environ.get("IMAP_USER"),
+            "imap_pass": os.environ.get("IMAP_PASS"),
+        }
+        missing = [k for k, v in env.items() if not v]
+        if missing:
+            raise RuntimeError(
+                f"Bratislava requires environment variables for: {', '.join(missing)}"
+            )
+        return env  # type: ignore[return-value]
+
+    async def _open_form(self, page: Page) -> None:
+        """Navigate to the request page and click 'New request'."""
         await page.goto(REQUEST_URL)
-        # Some sites have transient cookie banners, handle gently if present
         try:
             btn = page.get_by_role("button", name="Accept")
             if await btn.is_visible():
                 await btn.click()
         except Exception:
             pass
-
         await page.get_by_role("link", name="New request").click()
 
-    async def _fill_and_submit(self, page):
-        # First name, last name, email
-        await page.locator("#fname").fill(FIRST_NAME)
-        await page.locator("#lname").fill(LAST_NAME)
-        await page.locator("#mail").fill(RECIPIENT_EMAIL)
-
-        # Date (use a clean direct fill, simpler than clicking the calendar widget)
+    async def _fill_and_submit(self, page: Page, cfg: dict[str, str]) -> None:
+        """Fill the form and click 'Send request'."""
+        await page.locator("#fname").fill(cfg["first_name"])
+        await page.locator("#lname").fill(cfg["last_name"])
+        await page.locator("#mail").fill(cfg["recipient"])
         await page.locator("#date").fill(_today_str_for_bsse())
-
-        # Consent checkbox
         await page.locator("#agree-checkbox").check()
-
-        # Submit
         await page.get_by_role("button", name="Send request").click()
 
-    async def _save_attachment(self, filename: str, data: bytes) -> str:
-        """
-        Save bytes into downloads/bratislava/ and register dedupe label.
-        Returns the saved path.
-        """
-        base_dir = Path("downloads") / DOWNLOAD_SUBDIR
-        base_dir.mkdir(parents=True, exist_ok=True)
-
-        target = base_dir / filename
-        label  = f"BSSE:{filename}"
-
-        if self.pipeline.has_seen(label):
-            print(f"(SKIP) Already saved {filename}")
-            return str(target)
-
-        if not target.exists():
-            target.write_bytes(data)
-            print(f"⬇️  Saved → {target}")
-        else:
-            print(f"(SKIP) File already on disk: {target}")
-
-        # If your pipeline supports remembering arbitrary labels:
-        remember = getattr(self.pipeline, "remember", None)
-        if callable(remember):
-            remember(label)
-
-        return str(target)
-
-    async def run(self):
-        # Phase 1: submit request
+    async def run(self) -> None:
+        """Submit the form, poll IMAP, persist every attachment."""
+        cfg = self._config()
         page = await self.browser.new_page()
-        await self._open_form(page)
-        await self._fill_and_submit(page)
+        try:
+            await self._open_form(page)
+            await self._fill_and_submit(page, cfg)
+            await random_delay(1.0, 2.0)
 
-        # tiny human-like wait
-        await random_delay(1.0, 2.0)
+            since_ts = time.time()
+            self.logger.info(
+                "Waiting for email to %s from %s with attachments",
+                cfg["recipient"], SENDER_EMAIL,
+            )
+            attachments = await wait_for_attachments(
+                imap_host=cfg["imap_host"],
+                imap_user=cfg["imap_user"],
+                imap_pass=cfg["imap_pass"],
+                from_filter=SENDER_EMAIL,
+                to_filter=cfg["recipient"],
+                since_epoch=since_ts,
+                timeout=600,
+                poll_interval=10,
+            )
+            if not attachments:
+                raise TimeoutError("Timed out waiting for BSSE email with attachments")
 
-        # Phase 2: poll mailbox for attachments since now
-        since_ts = time.time()
-        print(f"📬 Waiting for email to {RECIPIENT_EMAIL} from {SENDER_EMAIL} with attachments …")
-        attachments = await wait_for_attachments(
-            imap_host=IMAP_HOST,
-            imap_user=IMAP_USER,
-            imap_pass=IMAP_PASS,
-            from_filter=SENDER_EMAIL,
-            to_filter=RECIPIENT_EMAIL,
-            since_epoch=since_ts,
-            timeout=600,          # up to 10 minutes; adjust if BSSE is slow
-            poll_interval=10,
-        )
-
-        if not attachments:
-            raise TimeoutError("Timed out waiting for BSSE email with attachments")
-
-        print(f"📎 Received {len(attachments)} attachment(s). Saving…")
-        for (fname, blob) in attachments:
-            # Defensive: strip path separators from filename
-            safe_name = os.path.basename(fname)
-            await self._save_attachment(safe_name, blob)
-            await random_delay(0.3, 0.8)
-
-        await page.close()
-        print("✅ BSSE done.")
+            self.logger.info("Received %d attachment(s)", len(attachments))
+            for fname, blob in attachments:
+                safe_name = os.path.basename(fname)
+                await self.pipeline.save((safe_name, blob), DOWNLOAD_SUBDIR)
+                await random_delay(0.3, 0.8)
+        finally:
+            await page.close()
+        self.logger.info("BSSE done")

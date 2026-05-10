@@ -1,91 +1,96 @@
-import re, asyncio
+"""Börse Berlin pre & post-trade CSV scraper.
+
+Pre-trade and post-trade pages each list dozens to hundreds of CSV download
+anchors. This scraper batches downloads to ``MAX_FILES_PER_RUN`` per
+invocation and respects the manifest dedupe so subsequent runs only fetch
+new files.
+"""
+from __future__ import annotations
+
+import asyncio
+import re
+from typing import Optional
+
+from playwright.async_api import Page
+
 from .base import Exchange
-from german_scraper.core.utils import click_first_consent
 from german_scraper.core.throttle import random_delay
+from german_scraper.core.utils import click_first_consent
 
-PRE_URL  = "https://www.boerse-berlin.com/index.php/MiFid_2_Information/Pretrades"
-POST_URL = "https://www.boerse-berlin.com/index.php/MiFid_2_Information/Post_Trade"
+PRE_URL: str = "https://www.boerse-berlin.com/index.php/MiFid_2_Information/Pretrades"
+POST_URL: str = "https://www.boerse-berlin.com/index.php/MiFid_2_Information/Post_Trade"
 
-# ─── batch parameters ─────────────────────────────────────────
-MAX_FILES_PER_RUN = 50          # tweak to your liking
-LONG_BREAK_SEC    = 30           # e.g. 300 → 5 min sleep instead of exit
-# ──────────────────────────────────────────────────────────────
+MAX_FILES_PER_RUN: int = 50
+LONG_BREAK_SEC: int = 30
+
 
 class Berlin(Exchange):
-    name = "Börse Berlin"
+    """Boerse Berlin (boerse-berlin.com) – MiFID II delayed data."""
+
+    name: str = "Börse Berlin"
 
     async def _process(
-        self, page, url, regex, sub,
-        use_href_csv=False, use_type_attr=False
-    ):
+        self,
+        page: Page,
+        url: str,
+        regex: str,
+        subdir: str,
+        *,
+        use_href_csv: bool = False,
+        use_type_attr: bool = False,
+    ) -> None:
+        """Visit ``url`` and download every matching CSV anchor."""
         await page.goto(url)
         await click_first_consent(page)
 
-        # wait until at least one download anchor is present
-        sel = ("a[type='text/comma-separated-values']" if use_type_attr
-               else "a[href$='.csv']" if use_href_csv
-               else "a")
-        await page.wait_for_selector(sel, timeout=15_000)
-
-        # collect anchors
         if use_type_attr:
-            links = await page.locator("a[type='text/comma-separated-values']").all()
+            selector: str = "a[type='text/comma-separated-values']"
         elif use_href_csv:
-            links = await page.locator("a[href$='.csv']").all()
+            selector = "a[href$='.csv']"
+        else:
+            selector = "a"
+        await page.wait_for_selector(selector, timeout=15_000)
+
+        if use_type_attr or use_href_csv:
+            links = await page.locator(selector).all()
         else:
             links = await page.locator("a").filter(has_text=re.compile(regex, re.I)).all()
 
-        print(f"🔍 {self.name}: {len(links)} links on {url}")
+        self.logger.info("%s: %d links on %s", self.name, len(links), url)
 
         downloaded_this_run = 0
         for i, link in enumerate(links, 1):
-            text = (await link.text_content()).strip()
+            text: Optional[str] = await link.text_content()
+            label = (text or "").strip()
+            if not label:
+                continue
 
-            # batch stop?
             if downloaded_this_run >= MAX_FILES_PER_RUN:
-                print(f"🛑 Reached batch limit ({MAX_FILES_PER_RUN}). Stopping.")
+                self.logger.warning("Reached batch limit (%d). Cooling off %ds.",
+                                    MAX_FILES_PER_RUN, LONG_BREAK_SEC)
                 if LONG_BREAK_SEC:
-                    print(f"😴 Cooling off for {LONG_BREAK_SEC}s …")
                     await asyncio.sleep(LONG_BREAK_SEC)
                 break
 
-            # debug and dedupe
-            if self.debug:
-                print(f"(DEBUG) [{i}/{len(links)}] Would download: {text}")
-                await random_delay(0.01, 0.03)
-                continue
-            if self.pipeline.has_seen(text):
-                print(f"(SKIP) [{i}/{len(links)}] Already downloaded: {text}")
-                continue
-
-            # download
-            print(f"⬇️  [{i}/{len(links)}] Downloading: {text}")
-            try:
-                async with page.expect_download() as dl_info:
-                    await link.click()
-                download = await dl_info.value
-                await self.pipeline.save(download, sub)
+            saved = await self._download_via_click(
+                page, link, subdir, label, post_delay=(0.2, 0.6),
+            )
+            if saved:
                 downloaded_this_run += 1
-                await random_delay(0.2, 0.6)    # longer, human-like delay
-            except Exception as e:
-                print(f"❌ Failed [{i}] {text}: {e}")
-                await random_delay(6, 12)
 
-    async def run(self):
+    async def run(self) -> None:
+        """Scrape the pre-trade page, then the post-trade page."""
         page = await self.browser.new_page()
-
-        # Pre-trade
-        await self._process(
-            page, PRE_URL,
-            r"^Download der Pretrade Daten für ",
-            "berlin/pretrade"
-        )
-
-        # Post-trade (anchors identified by MIME type)
-        await self._process(
-            page, POST_URL,
-            r"", "berlin/posttrade",
-            use_type_attr=True
-        )
-
-        await page.close()
+        try:
+            await self._process(
+                page, PRE_URL,
+                r"^Download der Pretrade Daten für ",
+                "berlin/pretrade",
+            )
+            await self._process(
+                page, POST_URL,
+                r"", "berlin/posttrade",
+                use_type_attr=True,
+            )
+        finally:
+            await page.close()
