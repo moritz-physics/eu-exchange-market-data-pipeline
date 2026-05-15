@@ -1,0 +1,41 @@
+{
+  "_comment": "Central runtime config for the EU exchange pipeline. Loaded by german_scraper/settings.py. Every key is optional — missing keys fall back to built-in defaults. Override the file location with $EU_SCRAPER_CONFIG.",
+
+  "scrape": {
+    "default_enabled": ["ice-post", "luxse"],
+    "concurrency": 4
+  },
+
+  "pacing": {
+    "berlin":      { "max_files_per_run": 50, "long_break_sec": 30, "post_delay": [0.2, 0.6] },
+    "berlin-cron": { "max_files_per_run": 50, "long_break_sec": 0,  "post_delay": [2.0, 6.0] }
+  },
+
+  "dq_rules": [
+    { "exchange": "berlin",         "min_files": 20, "max_failure_rate": 0.10 },
+    { "exchange": "cboe",           "min_files": 20, "max_failure_rate": 0.10 },
+    { "exchange": "athex",          "min_files": 3,  "max_failure_rate": 0.10 },
+    { "exchange": "bme",            "min_files": 1,  "max_failure_rate": 0.20 },
+    { "exchange": "bank-of-greece", "min_files": 1,  "max_failure_rate": 0.20 }
+  ],
+
+  "urls": {
+    "athex": "https://www.athexgroup.gr/en/market-data/data-services/delayed-feed",
+    "berlin_pre": "https://www.boerse-berlin.com/index.php/MiFid_2_Information/Pretrades",
+    "berlin_post": "https://www.boerse-berlin.com/index.php/MiFid_2_Information/Post_Trade",
+    "bme": "https://www.bolsasymercados.es/bme-exchange/en/post-trade-data",
+    "bucharest": "https://www.bvb.ro/TradingAndStatistics/Trading/MiFIDIIData",
+    "cboe": "https://www.cboe.com/europe/equities/trade_data/",
+    "bratislava": "https://www.bsse.sk/bcpb/en/sending-pre-trade-and-post-trade-data/",
+    "luxse": "https://www.luxse.com/market-overview/trading-data/pre-and-post-trade-data",
+    "bank_of_greece_pre": "https://www.bankofgreece.gr/en/main-tasks/markets/hdat/pre-trade-data#:~:text=HDAT%20makes%20pre,600%2F2014%20%28MIFIR",
+    "ice_pre": "https://www.ice.com/report/60",
+    "ice_post": "https://www.ice.com/report/61",
+    "bulgaria": "https://www.bse-sofia.bg/en/apa-trading-data",
+    "deutsche_boerse": "https://www.mds.deutsche-boerse.com/mds-en/real-time-data/MiFID-II-Disaggregated-Information-Products-delayed--1520116"
+  },
+
+  "deutsche_boerse": {
+    "rows": ["Xetra – Pre-Trade File service"]
+  }
+}

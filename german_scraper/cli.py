@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import sys
 from typing import Optional, Type
 
 import typer
@@ -26,6 +25,7 @@ import typer
 from german_scraper.core.logging_config import configure_logging, get_logger
 from german_scraper.core.metrics import METRICS
 from german_scraper.core.playwright_client import PlaywrightClient
+from german_scraper.settings import SETTINGS
 from german_scraper.exchanges.athex import ATHEX
 from german_scraper.exchanges.bank_of_greece import BankOfGreece
 from german_scraper.exchanges.base import Exchange
@@ -35,7 +35,9 @@ from german_scraper.exchanges.bme import BME
 from german_scraper.exchanges.boersenag import BoersenAG
 from german_scraper.exchanges.bratislava import Bratislava
 from german_scraper.exchanges.bucharest import Bucharest
+from german_scraper.exchanges.bulgaria import BorsaBulgaria
 from german_scraper.exchanges.cboe import Cboe
+from german_scraper.exchanges.deutsche_boerse import DeutscheBoerse
 from german_scraper.exchanges.ice import ICE
 from german_scraper.exchanges.ice_post import ICEPost
 from german_scraper.exchanges.lsx import LSX
@@ -55,7 +57,9 @@ SCRAPER_REGISTRY: dict[str, Type[Exchange]] = {
     "boersenag": BoersenAG,
     "bratislava": Bratislava,
     "bucharest": Bucharest,
+    "bulgaria": BorsaBulgaria,
     "cboe": Cboe,
+    "deutsche-boerse": DeutscheBoerse,
     "ice": ICE,
     "ice-post": ICEPost,
     "lsx": LSX,
@@ -65,7 +69,7 @@ SCRAPER_REGISTRY: dict[str, Type[Exchange]] = {
     "wienerboerse-stealth": WienerBoerseStealth,
 }
 
-DEFAULT_ENABLED: list[str] = ["ice-post", "luxse"]
+DEFAULT_ENABLED: list[str] = SETTINGS.default_enabled()
 
 app = typer.Typer(
     add_completion=False,
@@ -127,7 +131,7 @@ def scrape(
               ". Known: " + ",".join(sorted(SCRAPER_REGISTRY))),
     ),
     concurrency: int = typer.Option(
-        int(os.environ.get("CONCURRENCY", "4")),
+        int(os.environ.get("CONCURRENCY", str(SETTINGS.concurrency()))),
         "--concurrency", "-c",
         help="Max parallel scrapers",
     ),

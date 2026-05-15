@@ -21,14 +21,19 @@ class Munich(Exchange):
     name: str = "Börse München (gettex)"
 
     async def _open_data_window(self, page: Page, link_locator) -> Page:
-        """Click ``link_locator`` and return the page that holds the file table."""
+        """Click ``link_locator`` and return the page that holds the file table.
+
+        Uses ``expect_popup`` so the popup waiter is armed *before* the
+        click — ``wait_for_event`` created as a bare coroutine races the
+        click and can miss the event. If no popup appears the click has
+        already navigated the current tab, so we return ``page`` without
+        clicking a second time.
+        """
         try:
-            popup_future = page.wait_for_event("popup", timeout=5_000)
-            await link_locator.click()
-            popup = await popup_future
-            return popup
+            async with page.expect_popup(timeout=5_000) as popup_info:
+                await link_locator.click()
+            return await popup_info.value
         except TimeoutError:
-            await link_locator.click()
             return page
 
     async def _download_every_link(self, data_page: Page, pattern: str, subdir: str) -> None:

@@ -18,8 +18,12 @@ from playwright.async_api import Page, TimeoutError
 from .base import Exchange
 from german_scraper.core.email_inbox import wait_for_attachments
 from german_scraper.core.throttle import random_delay
+from german_scraper.settings import SETTINGS
 
-REQUEST_URL: str = "https://www.bsse.sk/bcpb/en/sending-pre-trade-and-post-trade-data/"
+REQUEST_URL: str = SETTINGS.exchange_url(
+    "bratislava",
+    "https://www.bsse.sk/bcpb/en/sending-pre-trade-and-post-trade-data/",
+)
 DOWNLOAD_SUBDIR: str = "bratislava"
 SENDER_EMAIL: str = os.environ.get("BSSE_SENDER_EMAIL", "sys@bsse.sk")
 

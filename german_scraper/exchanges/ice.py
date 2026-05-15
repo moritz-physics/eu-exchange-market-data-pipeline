@@ -19,6 +19,7 @@ from playwright.async_api import Page, TimeoutError
 
 from .base import Exchange
 from german_scraper.core.totp import get_totp_code
+from german_scraper.settings import SETTINGS
 
 PAGE_LOAD_WAIT: tuple[float, float] = (2.0, 4.0)
 
@@ -27,7 +28,7 @@ class ICE(Exchange):
     """ICE Exchange delayed-trade scraper (paginated table of buttons)."""
 
     name: str = "ICE Exchange"
-    report_url: str = "https://www.ice.com/report/60"
+    report_url: str = SETTINGS.exchange_url("ice_pre", "https://www.ice.com/report/60")
     label_prefix: str = "ICE"
     download_subdir: str = "ice"
 

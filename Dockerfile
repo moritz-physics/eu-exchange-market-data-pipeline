@@ -19,14 +19,14 @@ ENV UV_LINK_MODE=copy \
 RUN pip install --no-cache-dir uv
 
 WORKDIR /app
-COPY pyproject.toml uv.lock README.md ./
+COPY pyproject.toml uv.lock README.md config.json ./
 COPY german_scraper/ ./german_scraper/
 
 # Install everything except the iceberg extra by default; flip
 # ``ICEBERG=1`` at build time to include it.
 ARG ICEBERG=0
 RUN if [ "$ICEBERG" = "1" ]; then \
-      uv sync --frozen --extra iceberg --prerelease=allow; \
+      uv sync --frozen --extra iceberg; \
     else \
       uv sync --frozen; \
     fi

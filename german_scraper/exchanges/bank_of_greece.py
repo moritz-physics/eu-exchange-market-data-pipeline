@@ -7,11 +7,15 @@ themselves stream over HTTP.
 """
 from __future__ import annotations
 
-from .base import Exchange
+import re
 
-PRE_URL: str = (
+from .base import Exchange
+from german_scraper.settings import SETTINGS
+
+PRE_URL: str = SETTINGS.exchange_url(
+    "bank_of_greece_pre",
     "https://www.bankofgreece.gr/en/main-tasks/markets/hdat/pre-trade-data"
-    "#:~:text=HDAT%20makes%20pre,600%2F2014%20%28MIFIR"
+    "#:~:text=HDAT%20makes%20pre,600%2F2014%20%28MIFIR",
 )
 
 
@@ -41,7 +45,9 @@ class BankOfGreece(Exchange):
         try:
             await page.goto(PRE_URL)
 
-            pre_link = page.get_by_role("link", name="PreTradeHDAT.json i")
+            pre_link = page.get_by_role(
+                "link", name=re.compile(r"PreTradeHDAT", re.I)
+            )
             await self._resolve_and_download(
                 page, pre_link, "bank-of-greece/Pre-Trade", "PreTradeHDAT.json",
             )
@@ -49,7 +55,9 @@ class BankOfGreece(Exchange):
             await page.get_by_role("link", name="Electronic Secondary").click()
             await page.get_by_role("link", name="Post-trade data").click()
 
-            post_link = page.get_by_role("link", name="PostTradeHDAT.json i")
+            post_link = page.get_by_role(
+                "link", name=re.compile(r"PostTradeHDAT", re.I)
+            )
             await self._resolve_and_download(
                 page, post_link, "bank-of-greece/Post-Trade", "PostTradeHDAT.json",
             )

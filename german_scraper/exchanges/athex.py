@@ -8,11 +8,11 @@ a UI gate; the hrefs are direct CSV URLs).
 from __future__ import annotations
 
 import re
-from typing import Optional
 
 from playwright.async_api import Page
 
 from german_scraper.core.http_downloader import collect_anchor_urls
+from german_scraper.settings import SETTINGS
 from .base import Exchange
 
 SECTIONS: list[dict[str, str]] = [
@@ -30,7 +30,9 @@ SECTIONS: list[dict[str, str]] = [
     },
 ]
 
-HOME_URL: str = "https://www.athexgroup.gr/en/market-data/data-services/delayed-feed"
+HOME_URL: str = SETTINGS.exchange_url(
+    "athex", "https://www.athexgroup.gr/en/market-data/data-services/delayed-feed"
+)
 
 
 class ATHEX(Exchange):

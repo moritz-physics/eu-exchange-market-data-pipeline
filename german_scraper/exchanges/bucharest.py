@@ -7,8 +7,11 @@ from playwright.async_api import Page
 
 from .base import Exchange
 from german_scraper.core.throttle import random_delay
+from german_scraper.settings import SETTINGS
 
-MAIN_URL: str = "https://www.bvb.ro/TradingAndStatistics/Trading/MiFIDIIData"
+MAIN_URL: str = SETTINGS.exchange_url(
+    "bucharest", "https://www.bvb.ro/TradingAndStatistics/Trading/MiFIDIIData"
+)
 
 
 class Bucharest(Exchange):

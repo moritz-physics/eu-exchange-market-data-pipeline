@@ -13,19 +13,24 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Optional
 
 from playwright.async_api import Page
 
 from german_scraper.core.http_downloader import collect_anchor_urls
 from .base import Exchange
 from german_scraper.core.utils import click_first_consent
+from german_scraper.settings import SETTINGS
 
-PRE_URL: str = "https://www.boerse-berlin.com/index.php/MiFid_2_Information/Pretrades"
-POST_URL: str = "https://www.boerse-berlin.com/index.php/MiFid_2_Information/Post_Trade"
+PRE_URL: str = SETTINGS.exchange_url(
+    "berlin_pre",
+    "https://www.boerse-berlin.com/index.php/MiFid_2_Information/Pretrades",
+)
+POST_URL: str = SETTINGS.exchange_url(
+    "berlin_post",
+    "https://www.boerse-berlin.com/index.php/MiFid_2_Information/Post_Trade",
+)
 
-MAX_FILES_PER_RUN: int = 50
-LONG_BREAK_SEC: int = 30
+_PACING: dict = SETTINGS.pacing("berlin")
 
 
 class Berlin(Exchange):
@@ -40,9 +45,9 @@ class Berlin(Exchange):
     """
 
     name: str = "Börse Berlin"
-    max_files_per_run: int = MAX_FILES_PER_RUN
-    long_break_sec: int = LONG_BREAK_SEC
-    post_delay: tuple[float, float] = (0.2, 0.6)
+    max_files_per_run: int = int(_PACING["max_files_per_run"])
+    long_break_sec: int = int(_PACING["long_break_sec"])
+    post_delay: tuple[float, float] = tuple(_PACING["post_delay"])  # type: ignore[assignment]
 
     async def _process(
         self,

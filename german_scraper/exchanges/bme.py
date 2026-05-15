@@ -8,8 +8,11 @@ from typing import Optional
 from playwright.async_api import Page
 
 from .base import Exchange
+from german_scraper.settings import SETTINGS
 
-BME_URL: str = "https://www.bolsasymercados.es/bme-exchange/en/post-trade-data"
+BME_URL: str = SETTINGS.exchange_url(
+    "bme", "https://www.bolsasymercados.es/bme-exchange/en/post-trade-data"
+)
 
 
 class BME(Exchange):

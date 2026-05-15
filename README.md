@@ -4,7 +4,7 @@
 [![Playwright](https://img.shields.io/badge/Playwright-1.59+-2EAD33?logo=playwright&logoColor=white)](https://playwright.dev/)
 [![Apache Iceberg](https://img.shields.io/badge/Apache%20Iceberg-ACID-blue?logo=apache&logoColor=white)](https://iceberg.apache.org/)
 [![Apache Parquet](https://img.shields.io/badge/Apache%20Parquet-Snappy-50ABF1?logo=apacheparquet&logoColor=white)](https://parquet.apache.org/)
-[![Tests](https://img.shields.io/badge/tests-30%2F30-brightgreen.svg)](tests_python)
+[![Tests](https://img.shields.io/badge/tests-58%2F58-brightgreen.svg)](tests_python)
 [![mypy](https://img.shields.io/badge/mypy-strict-2A6DB2.svg)](https://mypy.readthedocs.io/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -80,9 +80,10 @@ energy market microstructure.
 | Bucharest Stock Exchange | RO | ✅ | ✅ | CSV | popups | — (button) |
 | Luxembourg Stock Exchange | LU | ✅ | ✅ | request form → emailed link | IMAP IDLE | n/a |
 | Bratislava Stock Exchange | SK | ✅ | ✅ | request form → email attachment | IMAP polling | n/a |
+| Borsa Bulgaria (BSE Sofia) | BG | — | ✅ | CSV (APA) | cookie consent | — (button) |
 | ICE pre-trade (`/report/60`) | UK / EU | ✅ | — | CSV per row | login + TOTP | — (button) |
 | ICE post-trade (`/report/61`) | UK / EU | — | ✅ | CSV per row | login + TOTP | — (button) |
-| Deutsche Börse (Frankfurt/Xetra/Tradegate/Eurex) | DE | ✅ | ✅ | `.json.gz` | none (Selenium) | n/a |
+| Deutsche Börse (Xetra/Frankfurt/Tradegate/Eurex/EEX) | DE | ✅ | ✅ | `.json.gz` | cookie consent | — (popup) |
 
 ---
 
@@ -190,7 +191,7 @@ uv sync
 uv run playwright install chromium
 
 # Optional: install the Iceberg sink
-uv sync --extra iceberg --prerelease=allow
+uv sync --extra iceberg
 ```
 
 Python 3.12+ required.
@@ -236,6 +237,15 @@ python -m german_scraper.cli dq --window-hours 24
 
 All runtime configuration is environment-driven so the same image runs
 unchanged on a laptop and a server.
+
+### Config file (`config.json`)
+
+A `config.json` at the repo root tunes the pipeline without code edits:
+the default scraper set (`default_enabled`), `concurrency`, per-venue
+`pacing`, DQ thresholds (`dq_rules`) and exchange `urls`. Every key is
+optional — missing keys fall back to built-in defaults, so the file can
+be deleted entirely. Point `$EU_SCRAPER_CONFIG` at an alternate path to
+override its location. Loaded by `german_scraper/settings.py`.
 
 ### Browser
 
@@ -310,18 +320,19 @@ named `eu-scraper-secrets`.
 ## Tests
 
 ```bash
-uv run pytest                           # 30/30 currently
+uv run pytest                           # 58/58 currently
 uv run mypy --package german_scraper.storage  # strict on storage/
 ```
 
-Tests cover: schema stability (bumping `SCHEMA_VERSION` is enforced),
+Tests cover: config-loader fallback behaviour, the scraper-registry
+contract, schema stability (bumping `SCHEMA_VERSION` is enforced),
 adapter golden inputs, manifest lifecycle (downloaded → ingested →
 failed), writer round-trip, DRY_RUN simulation, ingest end-to-end,
 DLQ behaviour on writer crash, metrics rendering, DQ gate evaluation,
-Iceberg snapshot isolation.
+and Iceberg snapshot isolation.
 
-The HTTP fast path is verified against a local HTTP server with
-canned HTML — no live venue traffic in CI.
+CI (`.github/workflows/ci.yml`) runs `pytest tests_python/` — no live
+venue traffic.
 
 ---
 

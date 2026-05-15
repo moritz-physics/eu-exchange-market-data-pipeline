@@ -19,9 +19,11 @@ from playwright.async_api import Page, TimeoutError
 from .base import Exchange
 from german_scraper.core.email_inbox import wait_for_link
 from german_scraper.core.throttle import random_delay
+from german_scraper.settings import SETTINGS
 
-LUXSE_URL: str = (
-    "https://www.luxse.com/market-overview/trading-data/pre-and-post-trade-data"
+LUXSE_URL: str = SETTINGS.exchange_url(
+    "luxse",
+    "https://www.luxse.com/market-overview/trading-data/pre-and-post-trade-data",
 )
 SENDER_EMAIL: str = os.environ.get(
     "LUXSE_SENDER_EMAIL", "marketdataservices@bourse.lu"

@@ -20,6 +20,7 @@ from typing import Iterable
 
 from german_scraper.core.logging_config import get_logger
 from german_scraper.core.manifest_db import Manifest
+from german_scraper.settings import SETTINGS
 
 logger = get_logger(__name__)
 
@@ -38,13 +39,15 @@ class DQRule:
     max_failure_rate: float = 0.10
 
 
-# Calibrate to typical observed daily volumes. Update from prod stats.
-DEFAULT_RULES: tuple[DQRule, ...] = (
-    DQRule("berlin",         min_files=20, max_failure_rate=0.10),
-    DQRule("cboe",           min_files=20, max_failure_rate=0.10),
-    DQRule("athex",          min_files=3,  max_failure_rate=0.10),
-    DQRule("bme",            min_files=1,  max_failure_rate=0.20),
-    DQRule("bank-of-greece", min_files=1,  max_failure_rate=0.20),
+# Calibrate to typical observed daily volumes. Tune in ``config.json``
+# (the ``dq_rules`` section); built-in defaults apply if it is absent.
+DEFAULT_RULES: tuple[DQRule, ...] = tuple(
+    DQRule(
+        exchange=str(r["exchange"]),
+        min_files=int(r.get("min_files", 0)),
+        max_failure_rate=float(r.get("max_failure_rate", 0.10)),
+    )
+    for r in SETTINGS.dq_rules()
 )
 
 

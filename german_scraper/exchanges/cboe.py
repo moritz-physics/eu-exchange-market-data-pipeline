@@ -12,14 +12,16 @@ from __future__ import annotations
 
 import asyncio
 import re
-from typing import Optional
 
 from playwright.async_api import Page
 
 from german_scraper.core.http_downloader import collect_anchor_urls
+from german_scraper.settings import SETTINGS
 from .base import Exchange
 
-CBOE_URL: str = "https://www.cboe.com/europe/equities/trade_data/"
+CBOE_URL: str = SETTINGS.exchange_url(
+    "cboe", "https://www.cboe.com/europe/equities/trade_data/"
+)
 MARKETS: tuple[str, ...] = ("bxe", "cxe", "dxe", "apa")
 
 

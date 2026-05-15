@@ -6,12 +6,13 @@ and subdir differ.
 from __future__ import annotations
 
 from .ice import ICE
+from german_scraper.settings import SETTINGS
 
 
 class ICEPost(ICE):
     """ICE Exchange post-trade scraper."""
 
     name: str = "ICE Exchange (Post-Trade)"
-    report_url: str = "https://www.ice.com/report/61"
+    report_url: str = SETTINGS.exchange_url("ice_post", "https://www.ice.com/report/61")
     label_prefix: str = "ICE POST"
     download_subdir: str = "ice_post"
